@@ -1,0 +1,98 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ./logs/postgres:/var/log/postgresql/
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+
+  api:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - .:/app
+      - ./logs/api:/app/logs
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/analytics/summary"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  client_bot:
+    build: .
+    command: python client_bot/main.py
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - .:/app
+      - ./logs/client_bot:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 30s
+
+  barista_bot:
+    build: .
+    command: python barista_bot/main.py
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - .:/app
+      - ./logs/barista_bot:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 30s
+
+  admin_panel:
+    build: .
+    command: python admin_panel/main.py
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - .:/app
+      - ./logs/admin_panel:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  postgres_data:
+    driver: local
