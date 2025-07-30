@@ -3,10 +3,39 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 import httpx
+import logging
 from common import buttons, messages
 from barista_bot.config import API_BASE_URL
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 router = Router()
+
+# Универсальная функция для API вызовов с обработкой ошибок
+async def safe_api_call(url: str, method: str = "GET", json_data: dict = None, params: dict = None):
+    """Безопасный вызов API с обработкой ошибок"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if method.upper() == "GET":
+                response = await client.get(url, params=params)
+            elif method.upper() == "POST":
+                response = await client.post(url, json=json_data, params=params)
+            else:
+                logger.error(f"Неподдерживаемый HTTP метод: {method}")
+                return None, 500
+            
+            return response.json() if response.status_code == 200 else None, response.status_code
+    except httpx.TimeoutException:
+        logger.error(f"Timeout при обращении к {url}")
+        return None, 408
+    except httpx.RequestError as e:
+        logger.error(f"Ошибка запроса к {url}: {e}")
+        return None, 500
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка при обращении к {url}: {e}")
+        return None, 500
 
 class OrderState(StatesGroup):
     waiting_for_code = State()
@@ -39,20 +68,33 @@ async def start_order(msg: types.Message, state: FSMContext):
 @router.message(OrderState.waiting_for_code)
 async def order_code(msg: types.Message, state: FSMContext):
     code = msg.text.strip()
-    async with httpx.AsyncClient() as client:
-        r = await client.post(f"{API_BASE_URL}/codes/use", params={"code_value": code})
-        if r.status_code != 200:
-            await msg.answer(messages.CODE_INVALID, reply_markup=kb_barista())
-            await state.clear()
-            return
-        user_id = r.json()["user_id"]
-        # Для простоты подгрузим профиль клиента
-        ur = await client.get(f"{API_BASE_URL}/users/{user_id}")
-        u = ur.json()
-        await state.update_data(user_id=user_id, code_id=r.json()["id"])
-        await msg.answer(messages.ORDER_CLIENT_FOUND.format(first_name=u['first_name'], last_name=u['last_name']))
-        await msg.answer(messages.ORDER_INPUT_RECEIPT)
-        await state.set_state(OrderState.waiting_for_receipt)
+    
+    # Используем код
+    result, status_code = await safe_api_call(f"{API_BASE_URL}/codes/use", "POST", params={"code_value": code})
+    if status_code != 200 or not result:
+        error_msg = messages.CODE_INVALID
+        if status_code == 408:
+            error_msg = "Превышено время ожидания. Проверьте подключение к интернету."
+        elif status_code == 404:
+            error_msg = "Код не найден или уже использован."
+        
+        await msg.answer(error_msg, reply_markup=kb_barista())
+        await state.clear()
+        return
+    
+    user_id = result["user_id"]
+    
+    # Получаем профиль клиента
+    user_result, user_status = await safe_api_call(f"{API_BASE_URL}/users/{user_id}")
+    if user_status != 200 or not user_result:
+        await msg.answer("Ошибка при получении данных клиента. Попробуйте позже.", reply_markup=kb_barista())
+        await state.clear()
+        return
+    
+    await state.update_data(user_id=user_id, code_id=result["id"])
+    await msg.answer(messages.ORDER_CLIENT_FOUND.format(first_name=user_result['first_name'], last_name=user_result['last_name']))
+    await msg.answer(messages.ORDER_INPUT_RECEIPT)
+    await state.set_state(OrderState.waiting_for_receipt)
 
 @router.message(OrderState.waiting_for_receipt)
 async def order_receipt(msg: types.Message, state: FSMContext):

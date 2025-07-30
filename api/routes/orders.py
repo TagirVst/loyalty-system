@@ -9,10 +9,30 @@ router = APIRouter()
 
 @router.post("/", response_model=OrderOut)
 async def create_order(order: OrderCreate, session: AsyncSession = Depends(get_session)):
+    # Валидация входных данных
+    if order.total_sum <= 0:
+        raise HTTPException(400, "Сумма заказа должна быть больше 0")
+    
+    if order.drinks_count < 0 or order.sandwiches_count < 0:
+        raise HTTPException(400, "Количество товаров не может быть отрицательным")
+    
+    if order.drinks_count == 0 and order.sandwiches_count == 0:
+        raise HTTPException(400, "Заказ должен содержать хотя бы один товар")
+    
+    if order.use_points and order.used_points_amount <= 0:
+        raise HTTPException(400, "При списании баллов количество должно быть больше 0")
+    
+    if order.used_points_amount < 0:
+        raise HTTPException(400, "Количество используемых баллов не может быть отрицательным")
+    
     # Проверяем существование пользователя
     user = await crud.get_user_by_id(session, order.user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    
+    # Проверяем достаточность баллов для списания
+    if order.use_points and user.points < order.used_points_amount:
+        raise HTTPException(400, f"Недостаточно баллов. Доступно: {user.points}, требуется: {order.used_points_amount}")
     
     # Создаем заказ
     order_obj = await crud.create_order(session, **order.model_dump())

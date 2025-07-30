@@ -29,9 +29,23 @@ async def update_user(session: AsyncSession, user_id: int, **kwargs):
 
 async def update_user_stats_after_order(session: AsyncSession, user_id: int, drinks_count: int, sandwiches_count: int, total_sum: int, use_points: bool, used_points_amount: int):
     """Обновляем статистику пользователя после заказа"""
+    # Дополнительные проверки на валидность данных
+    if drinks_count < 0 or sandwiches_count < 0:
+        raise ValueError("Количество товаров не может быть отрицательным")
+    
+    if total_sum <= 0:
+        raise ValueError("Сумма заказа должна быть больше 0")
+    
+    if used_points_amount < 0:
+        raise ValueError("Количество используемых баллов не может быть отрицательным")
+    
     user = await get_user_by_id(session, user_id)
     if not user:
-        return
+        raise ValueError("Пользователь не найден")
+    
+    # Проверяем достаточность баллов для списания
+    if use_points and user.points < used_points_amount:
+        raise ValueError(f"Недостаточно баллов. Доступно: {user.points}, требуется: {used_points_amount}")
     
     # Обновляем счетчики
     new_drinks_count = user.drinks_count + drinks_count

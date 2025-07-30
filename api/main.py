@@ -8,6 +8,8 @@ from api.config import settings
 
 from api.routes import users, orders, codes, feedback, gifts, analytics, notifications
 
+import os
+
 # Создаем limiter для rate limiting
 limiter = Limiter(key_func=get_remote_address)
 
@@ -24,11 +26,15 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS настройки в зависимости от окружения
-cors_origins = ["*"] if settings.DEBUG else [
-    "http://localhost:3000",
-    "http://localhost:8080", 
-    "https://yourdomain.com"  # Замените на ваш домен
-]
+if settings.DEBUG:
+    cors_origins = ["*"]
+else:
+    # В продакшене используем только разрешенные домены
+    allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    cors_origins = [origin.strip() for origin in allowed_origins if origin.strip()]
+    if not cors_origins:
+        print("WARNING: No ALLOWED_ORIGINS specified for production environment")
+        cors_origins = []
 
 app.add_middleware(
     CORSMiddleware,
