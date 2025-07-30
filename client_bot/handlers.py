@@ -62,7 +62,7 @@ async def start(msg: types.Message, state: FSMContext):
 
 @router.message(F.text == buttons.BTN_START)
 async def register(msg: types.Message, state: FSMContext):
-    user_data, status_code = await safe_api_call(f"{API_BASE_URL}/users/{msg.from_user.id}")
+    user_data, status_code = await safe_api_call(f"{API_BASE_URL}/users/{str(msg.from_user.id)}")
     if status_code == 200 and user_data:
         await msg.answer(messages.REGISTRATION_SUCCESS, reply_markup=kb_main())
         await state.clear()
@@ -95,13 +95,33 @@ async def get_lastname(msg: types.Message, state: FSMContext):
     await state.set_state(RegisterState.waiting_for_birthdate)
 
 @router.message(RegisterState.waiting_for_birthdate)
-async def get_birthdate(msg: types.Message, state: FSMContext):
+async def register_birthdate(msg: types.Message, state: FSMContext):
     try:
-        d, m, y = map(int, msg.text.split("."))
-        await state.update_data(birth_date=f"{y:04d}-{m:02d}-{d:02d}")
-    except Exception:
-        await msg.answer("Неверный формат даты. Введите как ДД.ММ.ГГГГ")
+        # Улучшенная валидация даты
+        date_parts = msg.text.strip().split(".")
+        if len(date_parts) != 3:
+            raise ValueError("Invalid format")
+        
+        d, m, y = map(int, date_parts)
+        
+        # Проверяем валидность даты
+        from datetime import date
+        birth_date = date(y, m, d)
+        
+        # Проверяем разумные границы возраста (от 10 до 100 лет)
+        from datetime import date as today_date
+        today = today_date.today()
+        age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+        
+        if age < 10 or age > 100:
+            await msg.answer("Пожалуйста, введите корректную дату рождения (возраст от 10 до 100 лет)")
+            return
+        
+        await state.update_data(birth_date=birth_date.strftime("%Y-%m-%d"))
+    except (ValueError, TypeError):
+        await msg.answer("Неверный формат даты. Введите как ДД.ММ.ГГГГ (например: 15.03.1990)")
         return
+    
     data = await state.get_data()
     await msg.answer(f"<b>Проверьте данные:</b>\nИмя: {data['first_name']}\nФамилия: {data['last_name']}\nТелефон: {data['phone']}\nДата рождения: {msg.text}\n\nНажмите 'Подтвердить'.", reply_markup=types.ReplyKeyboardMarkup(keyboard=[[types.KeyboardButton(text=buttons.BTN_CONFIRM)]], resize_keyboard=True))
     await state.set_state(RegisterState.confirm)
@@ -132,7 +152,7 @@ async def register_confirm(msg: types.Message, state: FSMContext):
 
 @router.message(F.text == buttons.BTN_PROFILE)
 async def show_profile(msg: types.Message, state: FSMContext):
-    user_data, status_code = await safe_api_call(f"{API_BASE_URL}/users/{msg.from_user.id}")
+    user_data, status_code = await safe_api_call(f"{API_BASE_URL}/users/{str(msg.from_user.id)}")
     if status_code == 200 and user_data:
         await msg.answer(messages.PROFILE_TEMPLATE.format(**user_data), reply_markup=kb_main())
     elif status_code == 404:
@@ -142,13 +162,17 @@ async def show_profile(msg: types.Message, state: FSMContext):
 
 @router.message(F.text == buttons.BTN_GEN_CODE)
 async def gen_code(msg: types.Message, state: FSMContext):
-    async with httpx.AsyncClient() as client:
-        r = await client.post(f"{API_BASE_URL}/codes/generate", params={"user_id": msg.from_user.id})
-    if r.status_code == 200:
-        code = r.json()["code"]
+    result, status_code = await safe_api_call(f"{API_BASE_URL}/codes/generate", "POST", params={"user_id": str(msg.from_user.id)})
+    
+    if status_code == 200 and result:
+        code = result["code"]
         await msg.answer(messages.CODE_GENERATED.format(code=code), reply_markup=types.ReplyKeyboardMarkup(keyboard=[[types.KeyboardButton(text=buttons.BTN_GEN_NEW_CODE)], [types.KeyboardButton(text=buttons.BTN_BACK)]], resize_keyboard=True))
+    elif status_code == 404:
+        await msg.answer("Вы не зарегистрированы в системе. Пожалуйста, зарегистрируйтесь.", reply_markup=kb_start())
+    elif status_code == 408:
+        await msg.answer("Превышено время ожидания. Проверьте подключение к интернету.", reply_markup=kb_main())
     else:
-        await msg.answer("Ошибка генерации кода.", reply_markup=kb_main())
+        await msg.answer("Ошибка при генерации кода. Попробуйте позже.", reply_markup=kb_main())
 
 @router.message(F.text == buttons.BTN_GEN_NEW_CODE)
 async def gen_new_code(msg: types.Message, state: FSMContext):
@@ -230,23 +254,25 @@ async def get_feedback_text(msg: types.Message, state: FSMContext):
     await send_feedback_to_api(msg, state, data['score'], msg.text)
 
 async def send_feedback_to_api(msg: types.Message, state: FSMContext, score: int, text: str):
-    async with httpx.AsyncClient() as client:
-        # Сначала получим ID пользователя
-        user_response = await client.get(f"{API_BASE_URL}/users/{msg.from_user.id}")
-        if user_response.status_code == 200:
-            user_id = user_response.json()["id"]
-            feedback_data = {
-                "user_id": user_id,
-                "score": score,
-                "text": text
-            }
-            response = await client.post(f"{API_BASE_URL}/feedback/review", json=feedback_data)
-            if response.status_code == 200:
-                await msg.answer(messages.FEEDBACK_SENT, reply_markup=kb_main())
-            else:
-                await msg.answer("Произошла ошибка при отправке отзыва", reply_markup=kb_main())
+    # Сначала получим данные пользователя
+    user_data, user_status = await safe_api_call(f"{API_BASE_URL}/users/{str(msg.from_user.id)}")
+    if user_status == 200 and user_data:
+        feedback_data = {
+            "user_id": user_data["id"],
+            "score": score,
+            "text": text
+        }
+        result, status_code = await safe_api_call(f"{API_BASE_URL}/feedback/review", "POST", json_data=feedback_data)
+        if status_code == 200:
+            await msg.answer(messages.FEEDBACK_SENT, reply_markup=kb_main())
+        elif status_code == 408:
+            await msg.answer("Превышено время ожидания. Попробуйте позже.", reply_markup=kb_main())
         else:
-            await msg.answer("Ошибка: пользователь не найден", reply_markup=kb_main())
+            await msg.answer("Произошла ошибка при отправке отзыва", reply_markup=kb_main())
+    elif user_status == 404:
+        await msg.answer("Вы не зарегистрированы в системе.", reply_markup=kb_start())
+    else:
+        await msg.answer("Ошибка при получении данных пользователя. Попробуйте позже.", reply_markup=kb_main())
     await state.clear()
 
 @router.message(F.text == buttons.BTN_LEAVE_IDEA)
@@ -263,22 +289,24 @@ async def get_idea_text(msg: types.Message, state: FSMContext):
         await feedback_menu(msg, state)
         return
     
-    async with httpx.AsyncClient() as client:
-        # Получаем ID пользователя
-        user_response = await client.get(f"{API_BASE_URL}/users/{msg.from_user.id}")
-        if user_response.status_code == 200:
-            user_id = user_response.json()["id"]
-            idea_data = {
-                "user_id": user_id,
-                "text": msg.text
-            }
-            response = await client.post(f"{API_BASE_URL}/feedback/idea", json=idea_data)
-            if response.status_code == 200:
-                await msg.answer(messages.IDEA_SENT, reply_markup=kb_main())
-            else:
-                await msg.answer("Произошла ошибка при отправке идеи", reply_markup=kb_main())
+    # Получаем данные пользователя
+    user_data, user_status = await safe_api_call(f"{API_BASE_URL}/users/{str(msg.from_user.id)}")
+    if user_status == 200 and user_data:
+        idea_data = {
+            "user_id": user_data["id"],
+            "text": msg.text
+        }
+        result, status_code = await safe_api_call(f"{API_BASE_URL}/feedback/idea", "POST", json_data=idea_data)
+        if status_code == 200:
+            await msg.answer(messages.IDEA_SENT, reply_markup=kb_main())
+        elif status_code == 408:
+            await msg.answer("Превышено время ожидания. Попробуйте позже.", reply_markup=kb_main())
         else:
-            await msg.answer("Ошибка: пользователь не найден", reply_markup=kb_main())
+            await msg.answer("Произошла ошибка при отправке идеи", reply_markup=kb_main())
+    elif user_status == 404:
+        await msg.answer("Вы не зарегистрированы в системе.", reply_markup=kb_start())
+    else:
+        await msg.answer("Ошибка при получении данных пользователя. Попробуйте позже.", reply_markup=kb_main())
     await state.clear()
 
 @router.message(F.text == buttons.BTN_CONTACT_ADMIN)
@@ -295,23 +323,25 @@ async def get_admin_message(msg: types.Message, state: FSMContext):
         await feedback_menu(msg, state)
         return
     
-    async with httpx.AsyncClient() as client:
-        # Получаем информацию о пользователе
-        user_response = await client.get(f"{API_BASE_URL}/users/{msg.from_user.id}")
-        if user_response.status_code == 200:
-            user = user_response.json()
-            # Отправляем как идею с пометкой "Сообщение для руководства"
-            idea_data = {
-                "user_id": user["id"],
-                "text": f"📞 Сообщение для руководства от {user['first_name']} {user['last_name']}:\n\n{msg.text}"
-            }
-            response = await client.post(f"{API_BASE_URL}/feedback/idea", json=idea_data)
-            if response.status_code == 200:
-                await msg.answer("Ваше сообщение отправлено руководству!", reply_markup=kb_main())
-            else:
-                await msg.answer("Произошла ошибка при отправке сообщения", reply_markup=kb_main())
+    # Получаем информацию о пользователе
+    user_data, user_status = await safe_api_call(f"{API_BASE_URL}/users/{str(msg.from_user.id)}")
+    if user_status == 200 and user_data:
+        # Отправляем как идею с пометкой "Сообщение для руководства"
+        idea_data = {
+            "user_id": user_data["id"],
+            "text": f"📞 Сообщение для руководства от {user_data['first_name']} {user_data['last_name']}:\n\n{msg.text}"
+        }
+        result, status_code = await safe_api_call(f"{API_BASE_URL}/feedback/idea", "POST", json_data=idea_data)
+        if status_code == 200:
+            await msg.answer("Ваше сообщение отправлено руководству!", reply_markup=kb_main())
+        elif status_code == 408:
+            await msg.answer("Превышено время ожидания. Попробуйте позже.", reply_markup=kb_main())
         else:
-            await msg.answer("Ошибка: пользователь не найден", reply_markup=kb_main())
+            await msg.answer("Произошла ошибка при отправке сообщения", reply_markup=kb_main())
+    elif user_status == 404:
+        await msg.answer("Вы не зарегистрированы в системе.", reply_markup=kb_start())
+    else:
+        await msg.answer("Ошибка при получении данных пользователя. Попробуйте позже.", reply_markup=kb_main())
     await state.clear()
 
 # Обработчик для кнопки "Назад" в меню обратной связи
