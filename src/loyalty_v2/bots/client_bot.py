@@ -10,8 +10,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from loyalty_v2.application.client_service import ClientService
-from loyalty_v2.application.order_service import IdentificationService
+from loyalty_v2.application.customer_auth_service import CustomerAuthService
+from loyalty_v2.application.customer_portal_service import CustomerPortalService
 from loyalty_v2.application.services import CustomerAlreadyExists, CustomerNotFound, CustomerService
 
 
@@ -25,18 +25,30 @@ class ClientBot:
     def __init__(self, *, bot: Bot, sessions: async_sessionmaker[AsyncSession], organization_id: UUID) -> None:
         self.bot, self.sessions, self.organization_id = bot, sessions, organization_id
         self.router = Router(name="client-v2")
-        self.customers, self.client, self.identification = CustomerService(), ClientService(), IdentificationService()
+        self.customers = CustomerService()
+        self.auth = CustomerAuthService()
+        self.portal = CustomerPortalService()
         self._routes()
 
     def dispatcher(self) -> Dispatcher:
         dp = Dispatcher(); dp.include_router(self.router); return dp
 
-    async def _customer_id(self, session: AsyncSession, telegram_id: int) -> UUID | None:
+    @staticmethod
+    def _external_session_key(message: Message) -> str:
+        return f"telegram:{message.chat.id}:{message.from_user.id}"
+
+    async def _session_id(self, session: AsyncSession, message: Message) -> UUID | None:
         try:
-            customer = await self.customers.by_identity(session, organization_id=self.organization_id, provider="telegram", external_subject=str(telegram_id))
+            item = await self.auth.open_session(
+                session,
+                organization_id=self.organization_id,
+                provider="telegram",
+                external_subject=str(message.from_user.id),
+                external_session_key=self._external_session_key(message),
+            )
         except CustomerNotFound:
             return None
-        return customer.id
+        return item.id
 
     @staticmethod
     def main_keyboard() -> ReplyKeyboardMarkup:
@@ -45,10 +57,10 @@ class ClientBot:
     def _routes(self) -> None:
         @self.router.message(CommandStart())
         async def start(message: Message, state: FSMContext) -> None:
-            async with self.sessions() as session:
-                customer_id = await self._customer_id(session, message.from_user.id)
-                if customer_id:
-                    home = await self.client.home(session, organization_id=self.organization_id, customer_id=customer_id)
+            async with self.sessions.begin() as session:
+                customer_session_id = await self._session_id(session, message)
+                if customer_session_id:
+                    home = await self.portal.home(session, customer_session_id=customer_session_id)
                     await message.answer(self._home_text(home), reply_markup=self.main_keyboard()); return
             await state.set_state(Registration.name); await message.answer("Регистрация\n\nКак вас зовут?", reply_markup=ReplyKeyboardRemove())
 
@@ -73,27 +85,27 @@ class ClientBot:
             data=await state.get_data()
             try:
                 async with self.sessions.begin() as session:
-                    result=await self.customers.register(session,organization_id=self.organization_id,provider="telegram",external_subject=str(message.from_user.id),first_name=data["name"],phone=data["phone"],birth_date=birth)
-                    customer_id=result.customer.id
+                    await self.customers.register(session,organization_id=self.organization_id,provider="telegram",external_subject=str(message.from_user.id),first_name=data["name"],phone=data["phone"],birth_date=birth)
+                    customer_session_id = await self._session_id(session, message)
+                    home = await self.portal.home(session, customer_session_id=customer_session_id)
             except CustomerAlreadyExists: await message.answer("Этот номер или Telegram уже зарегистрирован."); return
             await state.clear()
-            async with self.sessions() as session: home=await self.client.home(session,organization_id=self.organization_id,customer_id=customer_id)
             await message.answer(self._home_text(home),reply_markup=self.main_keyboard())
 
         @self.router.message(F.text == "Получить код")
         async def code(message: Message) -> None:
             async with self.sessions.begin() as session:
-                customer_id=await self._customer_id(session,message.from_user.id)
-                if not customer_id: await message.answer("Сначала пройдите регистрацию: /start"); return
-                item=await self.identification.generate(session,organization_id=self.organization_id,customer_id=customer_id)
+                customer_session_id=await self._session_id(session,message)
+                if not customer_session_id: await message.answer("Сначала пройдите регистрацию: /start"); return
+                item=await self.portal.identification_code(session,customer_session_id=customer_session_id)
             await message.answer(f"Ваш код: {item.code}\n\nПокажите его сотруднику. Код действует 90 секунд.")
 
         @self.router.message(F.text == "Мои награды")
         async def rewards(message: Message) -> None:
-            async with self.sessions() as session:
-                customer_id=await self._customer_id(session,message.from_user.id)
-                if not customer_id: await message.answer("Сначала пройдите регистрацию: /start"); return
-                items=await self.client.rewards(session,organization_id=self.organization_id,customer_id=customer_id)
+            async with self.sessions.begin() as session:
+                customer_session_id=await self._session_id(session,message)
+                if not customer_session_id: await message.answer("Сначала пройдите регистрацию: /start"); return
+                items=await self.portal.rewards(session,customer_session_id=customer_session_id)
             if not items: await message.answer("Активных наград сейчас нет."); return
             lines=["Ваши награды:"]
             for reward,definition in items:
@@ -102,10 +114,10 @@ class ClientBot:
 
         @self.router.message(F.text == "История")
         async def history(message: Message) -> None:
-            async with self.sessions() as session:
-                customer_id=await self._customer_id(session,message.from_user.id)
-                if not customer_id: await message.answer("Сначала пройдите регистрацию: /start"); return
-                items=await self.client.history(session,organization_id=self.organization_id,customer_id=customer_id,limit=10)
+            async with self.sessions.begin() as session:
+                customer_session_id=await self._session_id(session,message)
+                if not customer_session_id: await message.answer("Сначала пройдите регистрацию: /start"); return
+                items=await self.portal.history(session,customer_session_id=customer_session_id,limit=10)
             if not items: await message.answer("История пока пустая."); return
             lines=["Последние операции:"]
             for item in items:
@@ -114,10 +126,10 @@ class ClientBot:
 
         @self.router.message(F.text == "Профиль")
         async def profile(message: Message) -> None:
-            async with self.sessions() as session:
-                customer_id=await self._customer_id(session,message.from_user.id)
-                if not customer_id: await message.answer("Сначала пройдите регистрацию: /start"); return
-                home=await self.client.home(session,organization_id=self.organization_id,customer_id=customer_id)
+            async with self.sessions.begin() as session:
+                customer_session_id=await self._session_id(session,message)
+                if not customer_session_id: await message.answer("Сначала пройдите регистрацию: /start"); return
+                home=await self.portal.home(session,customer_session_id=customer_session_id)
             c=home.customer; await message.answer(f"{c.first_name}\nТелефон: {c.phone}\nДата рождения: {c.birth_date.strftime('%d.%m.%Y')}\nУровень: {home.tier_name}")
 
     @staticmethod
