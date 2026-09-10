@@ -4,20 +4,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import (
-    BigInteger,
-    Boolean,
-    CheckConstraint,
-    Date,
-    DateTime,
-    ForeignKey,
-    Index,
-    Integer,
-    String,
-    UniqueConstraint,
-    func,
-    text,
-)
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from loyalty_v2.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -41,7 +28,6 @@ class LedgerEntryType(StrEnum):
 
 class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "organizations"
-
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
     default_currency_code: Mapped[str] = mapped_column(String(3), nullable=False, default="RUB")
@@ -50,10 +36,7 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Location(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "locations"
-    __table_args__ = (
-        UniqueConstraint("organization_id", "code", name="uq_locations_organization_code"),
-    )
-
+    __table_args__ = (UniqueConstraint("organization_id", "code", name="uq_locations_organization_code"),)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -64,13 +47,10 @@ class Location(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "customers"
-    __table_args__ = (
-        UniqueConstraint("organization_id", "telegram_id", name="uq_customers_org_telegram"),
-        UniqueConstraint("organization_id", "phone", name="uq_customers_org_phone"),
-    )
-
+    __table_args__ = (UniqueConstraint("organization_id", "phone", name="uq_customers_org_phone"),)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Transitional compatibility field. New authentication uses CustomerAuthIdentity.
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     first_name: Mapped[str] = mapped_column(String(160), nullable=False)
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
     birth_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -82,7 +62,6 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Staff(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "staff"
     __table_args__ = (UniqueConstraint("organization_id", "pin_fingerprint", name="uq_staff_org_pin_fingerprint"),)
-
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     location_id: Mapped[UUID] = mapped_column(ForeignKey("locations.id", ondelete="RESTRICT"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -100,7 +79,6 @@ class LoyaltyTier(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("minimum_spend_minor >= 0", name="minimum_spend_nonnegative"),
         CheckConstraint("cashback_basis_points >= 0", name="cashback_nonnegative"),
     )
-
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -115,7 +93,6 @@ class CustomerLoyaltyState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("customer_id", name="uq_customer_loyalty_state_customer"),
         CheckConstraint("qualification_spend_minor >= 0", name="qualification_spend_nonnegative"),
     )
-
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     automatic_tier_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
@@ -130,7 +107,6 @@ class PointsAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("customer_id", name="uq_points_accounts_customer"),
         CheckConstraint("balance >= 0", name="balance_nonnegative"),
     )
-
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -141,15 +117,8 @@ class PointsLedgerEntry(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "points_ledger_entries"
     __table_args__ = (
         CheckConstraint("delta <> 0", name="delta_nonzero"),
-        Index(
-            "uq_points_ledger_entries_org_idempotency",
-            "organization_id",
-            "idempotency_key",
-            unique=True,
-            postgresql_where=text("idempotency_key IS NOT NULL"),
-        ),
+        Index("uq_points_ledger_entries_org_idempotency", "organization_id", "idempotency_key", unique=True, postgresql_where=text("idempotency_key IS NOT NULL")),
     )
-
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
     account_id: Mapped[UUID] = mapped_column(ForeignKey("points_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
