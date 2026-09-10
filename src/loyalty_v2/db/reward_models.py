@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from loyalty_v2.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -25,6 +25,16 @@ class RewardDefinition(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class CustomerReward(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "customer_rewards"
+    __table_args__ = (
+        Index(
+            "uq_customer_rewards_org_customer_source_key",
+            "organization_id",
+            "customer_id",
+            "source_key",
+            unique=True,
+            postgresql_where=text("source_key IS NOT NULL"),
+        ),
+    )
 
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -35,7 +45,11 @@ class CustomerReward(UUIDPrimaryKeyMixin, Base):
     valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     source_type: Mapped[str | None] = mapped_column(String(32))
     source_id: Mapped[UUID | None] = mapped_column()
+    source_key: Mapped[str | None] = mapped_column(String(160), index=True)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
