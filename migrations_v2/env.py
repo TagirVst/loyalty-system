@@ -11,6 +11,7 @@ from loyalty_v2.core.config import get_settings
 from loyalty_v2.db.base import Base
 from loyalty_v2.db import auth_models  # noqa: F401
 from loyalty_v2.db import customer_policy_models  # noqa: F401
+from loyalty_v2.db import identity_models  # noqa: F401
 from loyalty_v2.db import models  # noqa: F401
 from loyalty_v2.db import order_models  # noqa: F401
 from loyalty_v2.db import refund_models  # noqa: F401
