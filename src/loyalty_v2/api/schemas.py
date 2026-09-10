@@ -23,6 +23,7 @@ class CustomerResponse(BaseModel):
 
 class AdjustPointsRequest(BaseModel):
     organization_id: UUID
+    staff_session_id: UUID
     delta: int
     reason: str = Field(min_length=1, max_length=500)
     idempotency_key: str = Field(min_length=1, max_length=128)
@@ -34,6 +35,23 @@ class PointsEntryResponse(BaseModel):
     delta: int
     balance_after: int
     entry_type: str
+
+
+class StaffLoginRequest(BaseModel):
+    organization_id: UUID
+    terminal_id: UUID
+    pin: str = Field(pattern=r"^\d{6}$")
+
+
+class StaffSessionResponse(BaseModel):
+    staff_session_id: UUID
+    staff_id: UUID
+    terminal_id: UUID
+    status: str
+
+
+class StaffLogoutRequest(BaseModel):
+    staff_session_id: UUID
 
 
 class GenerateCodeRequest(BaseModel):
@@ -50,6 +68,7 @@ class IdentificationCodeResponse(BaseModel):
 class CreateDraftRequest(BaseModel):
     organization_id: UUID
     location_id: UUID
+    staff_session_id: UUID
     gross_amount_minor: int = Field(gt=0)
     requested_points: int = Field(default=0, ge=0)
     currency_code: str = Field(default="RUB", min_length=3, max_length=3)
@@ -65,11 +84,13 @@ class DraftResponse(BaseModel):
 
 class IdentifyDraftRequest(BaseModel):
     organization_id: UUID
+    staff_session_id: UUID
     code: str = Field(pattern=r"^\d{5}$")
 
 
 class QuoteRequest(BaseModel):
     organization_id: UUID
+    staff_session_id: UUID
 
 
 class QuoteResponse(BaseModel):
@@ -90,6 +111,7 @@ class QuoteResponse(BaseModel):
 
 class ConfirmOrderRequest(BaseModel):
     organization_id: UUID
+    staff_session_id: UUID
     quote_id: UUID
     idempotency_key: str = Field(min_length=1, max_length=128)
 
