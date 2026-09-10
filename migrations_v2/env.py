@@ -12,6 +12,7 @@ from loyalty_v2.db.base import Base
 from loyalty_v2.db import auth_models  # noqa: F401
 from loyalty_v2.db import models  # noqa: F401
 from loyalty_v2.db import order_models  # noqa: F401
+from loyalty_v2.db import reward_models  # noqa: F401
 
 
 config = context.config
