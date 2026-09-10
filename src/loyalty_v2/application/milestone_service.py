@@ -21,15 +21,7 @@ class MilestoneService:
     def __init__(self) -> None:
         self.rewards = RewardService()
 
-    async def apply_sale(
-        self,
-        session: AsyncSession,
-        *,
-        organization_id: UUID,
-        customer_id: UUID,
-        order_id: UUID,
-        category_counts: dict[str, int],
-    ) -> MilestoneResult:
+    async def apply_sale(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, order_id: UUID, category_counts: dict[str, int]) -> MilestoneResult:
         issued: list[UUID] = []
         for code, count in sorted(category_counts.items()):
             if count <= 0:
@@ -47,20 +39,13 @@ class MilestoneService:
                 CustomerCategoryCounter.category_id == category.id,
             ).with_for_update())
             if counter is None:
-                counter = CustomerCategoryCounter(
-                    organization_id=organization_id,
-                    customer_id=customer_id,
-                    category_id=category.id,
-                    lifetime_count=0,
-                    net_count=0,
-                )
+                counter = CustomerCategoryCounter(organization_id=organization_id, customer_id=customer_id, category_id=category.id, lifetime_count=0, net_count=0)
                 session.add(counter)
                 await session.flush()
             before = counter.net_count
             counter.lifetime_count += count
             counter.net_count += count
             counter.version += 1
-
             rules = (await session.scalars(select(MilestoneRewardRule).where(
                 MilestoneRewardRule.organization_id == organization_id,
                 MilestoneRewardRule.category_id == category.id,
@@ -100,15 +85,8 @@ class MilestoneService:
         await session.flush()
         return MilestoneResult(tuple(issued))
 
-    async def apply_refund(
-        self,
-        session: AsyncSession,
-        *,
-        organization_id: UUID,
-        customer_id: UUID,
-        order_id: UUID,
-        category_counts: dict[str, int],
-    ) -> None:
+    async def apply_refund(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, order_id: UUID, category_counts: dict[str, int]) -> None:
+        del order_id  # threshold state, not source order, determines revocation
         for code, count in sorted(category_counts.items()):
             if count <= 0:
                 continue
@@ -128,16 +106,24 @@ class MilestoneService:
             counter.net_count = max(0, counter.net_count - count)
             counter.version += 1
 
-        issuances = (await session.scalars(select(MilestoneIssuance).where(
-            MilestoneIssuance.organization_id == organization_id,
-            MilestoneIssuance.customer_id == customer_id,
-            MilestoneIssuance.source_order_id == order_id,
-            MilestoneIssuance.revoked.is_(False),
-        ).with_for_update())).all()
-        for issuance in issuances:
-            reward = await session.get(CustomerReward, issuance.customer_reward_id)
-            if reward is not None and reward.status == "active" and reward.quantity_remaining > 0:
-                reward.status = "revoked"
-                reward.quantity_remaining = 0
-            issuance.revoked = True
+            rules = (await session.scalars(select(MilestoneRewardRule).where(
+                MilestoneRewardRule.organization_id == organization_id,
+                MilestoneRewardRule.category_id == category.id,
+            ))).all()
+            for rule in rules:
+                issuances = (await session.scalars(select(MilestoneIssuance).where(
+                    MilestoneIssuance.organization_id == organization_id,
+                    MilestoneIssuance.customer_id == customer_id,
+                    MilestoneIssuance.rule_id == rule.id,
+                    MilestoneIssuance.revoked.is_(False),
+                ).with_for_update())).all()
+                for issuance in issuances:
+                    threshold_value = issuance.milestone_number * rule.threshold_count
+                    if counter.net_count >= threshold_value:
+                        continue
+                    reward = await session.get(CustomerReward, issuance.customer_reward_id)
+                    if reward is not None and reward.status == "active" and reward.quantity_remaining > 0:
+                        reward.status = "revoked"
+                        reward.quantity_remaining = 0
+                    issuance.revoked = True
         await session.flush()
