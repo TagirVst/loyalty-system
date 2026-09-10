@@ -46,12 +46,21 @@ class CustomerPolicyService:
         return EffectiveLoyaltyPolicy(automatic_tier=automatic_tier, effective_tier=effective_tier, redemption_percent=redemption_override.max_percent if redemption_override else 30, tier_override_id=tier_override.id if tier_override else None, redemption_override_id=redemption_override.id if redemption_override else None, inactivity_steps=state.inactivity_steps)
 
     async def set_tier_override(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, tier_id: UUID, staff_id: UUID, reason: str, ends_at: datetime | None) -> CustomerTierOverride:
-        now=datetime.now(timezone.utc); current=(await session.scalars(select(CustomerTierOverride).where(CustomerTierOverride.organization_id==organization_id, CustomerTierOverride.customer_id==customer_id, CustomerTierOverride.is_active.is_(True)).with_for_update())).all()
+        now = datetime.now(timezone.utc)
+        customer = await session.scalar(select(Customer.id).where(Customer.id == customer_id, Customer.organization_id == organization_id))
+        tier = await session.scalar(select(LoyaltyTier.id).where(LoyaltyTier.id == tier_id, LoyaltyTier.organization_id == organization_id, LoyaltyTier.is_active.is_(True)))
+        if customer is None or tier is None:
+            raise CustomerPolicyError("Customer or tier is unavailable")
+        if ends_at is not None and ends_at <= now:
+            raise CustomerPolicyError("Tier override end must be in the future")
+        current=(await session.scalars(select(CustomerTierOverride).where(CustomerTierOverride.organization_id==organization_id, CustomerTierOverride.customer_id==customer_id, CustomerTierOverride.is_active.is_(True)).with_for_update())).all()
         for item in current: item.is_active=False
         override=CustomerTierOverride(organization_id=organization_id,customer_id=customer_id,tier_id=tier_id,starts_at=now,ends_at=ends_at,reason=reason,created_by_staff_id=staff_id); session.add(override); await session.flush(); return override
 
     async def set_redemption_override(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, max_percent: int, staff_id: UUID, reason: str, ends_at: datetime) -> CustomerRedemptionOverride:
         if not 0<=max_percent<=100 or ends_at<=datetime.now(timezone.utc): raise CustomerPolicyError("Invalid redemption override")
+        customer = await session.scalar(select(Customer.id).where(Customer.id == customer_id, Customer.organization_id == organization_id))
+        if customer is None: raise CustomerPolicyError("Customer not found")
         current=(await session.scalars(select(CustomerRedemptionOverride).where(CustomerRedemptionOverride.organization_id==organization_id,CustomerRedemptionOverride.customer_id==customer_id,CustomerRedemptionOverride.is_active.is_(True)).with_for_update())).all()
         for item in current: item.is_active=False
         override=CustomerRedemptionOverride(organization_id=organization_id,customer_id=customer_id,max_percent=max_percent,starts_at=datetime.now(timezone.utc),ends_at=ends_at,reason=reason,created_by_staff_id=staff_id); session.add(override); await session.flush(); return override
