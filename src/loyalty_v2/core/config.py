@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     pin_failures_before_lock: int = 5
     pin_base_lock_seconds: int = 300
     client_bot_token: str | None = None
+    staff_bot_token: str | None = None
     organization_id: str | None = None
 
     @model_validator(mode="after")
