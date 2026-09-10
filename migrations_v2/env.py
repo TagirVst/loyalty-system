@@ -19,6 +19,7 @@ from loyalty_v2.db import identity_models  # noqa: F401
 from loyalty_v2.db import milestone_models  # noqa: F401
 from loyalty_v2.db import models  # noqa: F401
 from loyalty_v2.db import notification_models  # noqa: F401
+from loyalty_v2.db import notification_template_models  # noqa: F401
 from loyalty_v2.db import order_models  # noqa: F401
 from loyalty_v2.db import refund_models  # noqa: F401
 from loyalty_v2.db import reward_models  # noqa: F401
