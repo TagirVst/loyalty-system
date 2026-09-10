@@ -13,6 +13,7 @@ from loyalty_v2.db import audit_models  # noqa: F401
 from loyalty_v2.db import auth_models  # noqa: F401
 from loyalty_v2.db import category_models  # noqa: F401
 from loyalty_v2.db import customer_policy_models  # noqa: F401
+from loyalty_v2.db import engagement_models  # noqa: F401
 from loyalty_v2.db import identity_models  # noqa: F401
 from loyalty_v2.db import milestone_models  # noqa: F401
 from loyalty_v2.db import models  # noqa: F401
