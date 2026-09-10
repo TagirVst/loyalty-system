@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from loyalty_v2.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -12,7 +12,13 @@ from loyalty_v2.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 class IdentificationSession(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "identification_sessions"
     __table_args__ = (
-        UniqueConstraint("organization_id", "code", "status", name="uq_identification_active_code_scope"),
+        Index(
+            "uq_identification_active_code_scope",
+            "organization_id",
+            "code",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
