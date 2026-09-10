@@ -12,7 +12,7 @@ from loyalty_v2.application.audit_service import AuditService
 from loyalty_v2.application.auth_service import Permission
 from loyalty_v2.application.feedback_service import FeedbackError, FeedbackService
 from loyalty_v2.application.principal import PrincipalService
-from loyalty_v2.application.services import CustomerNotFound, CustomerService, DomainError
+from loyalty_v2.application.services import DomainError
 from loyalty_v2.db.engagement_models import CustomerFeedback, CustomerSegment
 from loyalty_v2.db.session import get_session
 
@@ -21,15 +21,6 @@ principals = PrincipalService()
 feedback = FeedbackService()
 audit = AuditService()
 admin_customers = AdminCustomerService()
-
-
-class CustomerFeedbackRequest(BaseModel):
-    organization_id: UUID
-    provider: str = Field(default="telegram", min_length=1, max_length=32)
-    external_subject: str = Field(min_length=1, max_length=255)
-    rating: int = Field(ge=1, le=5)
-    comment: str | None = Field(default=None, max_length=5000)
-    order_id: UUID | None = None
 
 
 class AdminScoped(BaseModel):
@@ -76,19 +67,6 @@ def _err(exc: DomainError) -> HTTPException:
 
 def _feedback_item(x: CustomerFeedback) -> dict:
     return {"id": x.id, "customer_id": x.customer_id, "order_id": x.order_id, "rating": x.rating, "comment": x.comment, "status": x.status, "routed_to_admins": x.routed_to_admins, "external_review_offered": x.external_review_offered, "created_at": x.created_at, "resolved_at": x.resolved_at, "resolved_by_staff_id": x.resolved_by_staff_id, "resolution_note": x.resolution_note}
-
-
-@router.post("/feedback", status_code=201)
-async def submit_feedback(body: CustomerFeedbackRequest, session: AsyncSession = Depends(get_session)) -> dict:
-    customers = CustomerService()
-    try:
-        async with session.begin():
-            customer = await customers.by_identity(session, organization_id=body.organization_id, provider=body.provider, external_subject=body.external_subject)
-            item = await feedback.submit(session, organization_id=body.organization_id, customer_id=customer.id, rating=body.rating, comment=body.comment, order_id=body.order_id)
-            settings = await feedback.settings(session, organization_id=body.organization_id)
-        return {"id": item.id, "rating": item.rating, "routed_to_admins": item.routed_to_admins, "external_review_offered": item.external_review_offered, "external_review_url": settings.external_review_url if item.external_review_offered else None}
-    except (FeedbackError, CustomerNotFound) as exc:
-        raise _err(exc) from exc
 
 
 @router.get("/admin/segments")
