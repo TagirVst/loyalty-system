@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loyalty_v2.application.customer_policy_service import CustomerPolicyService
 from loyalty_v2.application.reward_engine import RewardCampaignEngine
 from loyalty_v2.application.services import DomainError,PointsService,TierService
+from loyalty_v2.db.category_models import SaleCategory
 from loyalty_v2.db.models import Customer,CustomerLoyaltyState,LedgerEntryType,PointsAccount
 from loyalty_v2.db.order_models import IdentificationSession,Order,OrderDraft,OrderQuote
 from loyalty_v2.db.reward_models import CustomerReward
@@ -43,12 +44,16 @@ class IdentificationService:
   draft.customer_id=customer.id;draft.identification_session_id=ident.id;draft.version+=1;await session.flush();return draft
 class OrderService:
  def __init__(self)->None:self.tiers=TierService();self.points=PointsService();self.effects=RewardCampaignEngine();self.policies=CustomerPolicyService()
- async def create_draft(self,session:AsyncSession,*,organization_id:UUID,location_id:UUID,gross_amount_minor:int,requested_points:int=0,currency_code:str="RUB",selected_reward_ids:list[UUID]|None=None)->OrderDraft:
+ async def create_draft(self,session:AsyncSession,*,organization_id:UUID,location_id:UUID,gross_amount_minor:int,requested_points:int=0,currency_code:str="RUB",selected_reward_ids:list[UUID]|None=None,category_counts:dict[str,int]|None=None)->OrderDraft:
   if gross_amount_minor<=0 or requested_points<0:raise DraftNotReady("Invalid order values")
-  d=OrderDraft(organization_id=organization_id,location_id=location_id,gross_amount_minor=gross_amount_minor,requested_points=requested_points,currency_code=currency_code,selected_reward_ids=[str(x) for x in(selected_reward_ids or [])]);session.add(d);await session.flush();return d
+  categories={str(k):int(v) for k,v in (category_counts or {}).items() if int(v)>0}
+  if categories:
+   known=set((await session.scalars(select(SaleCategory.code).where(SaleCategory.organization_id==organization_id,SaleCategory.is_active.is_(True),SaleCategory.code.in_(categories.keys())))).all())
+   if known!=set(categories):raise DraftNotReady("Unknown or inactive sale category")
+  d=OrderDraft(organization_id=organization_id,location_id=location_id,gross_amount_minor=gross_amount_minor,requested_points=requested_points,currency_code=currency_code,selected_reward_ids=[str(x) for x in(selected_reward_ids or [])],category_counts=categories);session.add(d);await session.flush();return d
  async def _calculation(self,session:AsyncSession,*,organization_id:UUID,draft:OrderDraft,account:PointsAccount,now:datetime):
   policy=await self.policies.resolve(session,organization_id=organization_id,customer_id=draft.customer_id,now=now); ids=[UUID(x) for x in draft.selected_reward_ids]
-  try: effects=await self.effects.resolve(session,organization_id=organization_id,customer_id=draft.customer_id,gross_amount_minor=draft.gross_amount_minor,selected_reward_ids=ids,now=now)
+  try: effects=await self.effects.resolve(session,organization_id=organization_id,customer_id=draft.customer_id,gross_amount_minor=draft.gross_amount_minor,selected_reward_ids=ids,category_counts=draft.category_counts,now=now)
   except ValueError as exc: raise RewardSelectionInvalid(str(exc)) from exc
   after=max(draft.gross_amount_minor-effects.total_discount_minor,0); max_by_percent=(after*policy.redemption_percent)//(100*POINT_MINOR_VALUE); maximum=min(max_by_percent,account.balance,after//POINT_MINOR_VALUE)
   if draft.requested_points>maximum:raise RedemptionLimitExceeded("Requested points exceed current redemption limit")
@@ -61,7 +66,7 @@ class OrderService:
   customer=await session.get(Customer,draft.customer_id);state=await session.scalar(select(CustomerLoyaltyState).where(CustomerLoyaltyState.customer_id==draft.customer_id));account=await session.scalar(select(PointsAccount).where(PointsAccount.customer_id==draft.customer_id))
   if customer is None or customer.is_blocked or state is None or account is None:raise DraftNotReady("Customer loyalty state is unavailable")
   now=datetime.now(timezone.utc);policy,effects,after,maximum,redeemed,paid,earned,snapshot,_=await self._calculation(session,organization_id=organization_id,draft=draft,account=account,now=now);qualification=after;potential=await self.tiers.tier_for_spend(session,organization_id,state.qualification_spend_minor+qualification)
-  q=OrderQuote(organization_id=organization_id,draft_id=draft.id,draft_version=draft.version,tier_id=policy.effective_tier.id,gross_amount_minor=draft.gross_amount_minor,amount_after_rewards_minor=after,max_redeemable_points=maximum,redeemed_points=redeemed,paid_amount_minor=paid,points_to_earn=earned,qualification_amount_minor=qualification,potential_tier_id=potential.id,loyalty_effects_snapshot=snapshot,expires_at=now+timedelta(seconds=QUOTE_TTL_SECONDS));session.add(q);await session.flush();return QuoteResult(q,account.balance)
+  q=OrderQuote(organization_id=organization_id,draft_id=draft.id,draft_version=draft.version,tier_id=policy.effective_tier.id,gross_amount_minor=draft.gross_amount_minor,amount_after_rewards_minor=after,max_redeemable_points=maximum,redeemed_points=redeemed,paid_amount_minor=paid,points_to_earn=earned,qualification_amount_minor=qualification,potential_tier_id=potential.id,loyalty_effects_snapshot=snapshot,category_counts_snapshot=dict(draft.category_counts),expires_at=now+timedelta(seconds=QUOTE_TTL_SECONDS));session.add(q);await session.flush();return QuoteResult(q,account.balance)
  async def confirm(self,session:AsyncSession,*,organization_id:UUID,draft_id:UUID,quote_id:UUID,idempotency_key:str,actor_staff_id:UUID|None=None)->Order:
   existing=await session.scalar(select(Order).where(Order.organization_id==organization_id,Order.idempotency_key==idempotency_key));
   if existing:return existing
@@ -69,7 +74,7 @@ class OrderService:
   if draft is None or draft.status!="draft" or draft.customer_id is None:raise DraftNotReady("Draft cannot be confirmed")
   quote=await session.scalar(select(OrderQuote).where(OrderQuote.id==quote_id,OrderQuote.draft_id==draft.id));now=datetime.now(timezone.utc)
   if quote is None or quote.expires_at<=now:raise QuoteExpired("Quote has expired")
-  if quote.draft_version!=draft.version:raise QuoteStale("Draft changed after quote")
+  if quote.draft_version!=draft.version or quote.category_counts_snapshot!=draft.category_counts:raise QuoteStale("Draft changed after quote")
   ident=await session.scalar(select(IdentificationSession).where(IdentificationSession.id==draft.identification_session_id).with_for_update())
   if ident is None or ident.status!="active" or ident.expires_at<=now:raise IdentificationExpired("Identification session is no longer valid")
   customer=await session.scalar(select(Customer).where(Customer.id==draft.customer_id,Customer.organization_id==organization_id).with_for_update());state=await session.scalar(select(CustomerLoyaltyState).where(CustomerLoyaltyState.customer_id==draft.customer_id).with_for_update())
@@ -77,11 +82,11 @@ class OrderService:
   account=await self.points._locked_account(session,organization_id,draft.customer_id);policy,effects,after,maximum,redeemed,paid,earned,snapshot,ids=await self._calculation(session,organization_id=organization_id,draft=draft,account=account,now=now)
   if snapshot!=quote.loyalty_effects_snapshot or paid!=quote.paid_amount_minor or earned!=quote.points_to_earn or maximum!=quote.max_redeemable_points:raise QuoteStale("Loyalty conditions changed after quote")
   qualification=after;newq=state.qualification_spend_minor+qualification;tier_after=await self.tiers.tier_for_spend(session,organization_id,newq)
-  order=Order(organization_id=organization_id,location_id=draft.location_id,customer_id=draft.customer_id,draft_id=draft.id,quote_id=quote.id,gross_amount_minor=draft.gross_amount_minor,redeemed_points=redeemed,paid_amount_minor=paid,points_earned=earned,qualification_amount_minor=qualification,tier_before_id=policy.effective_tier.id,tier_after_id=tier_after.id,loyalty_effects_snapshot=snapshot,idempotency_key=idempotency_key,actor_staff_id=actor_staff_id);session.add(order);await session.flush()
+  order=Order(organization_id=organization_id,location_id=draft.location_id,customer_id=draft.customer_id,draft_id=draft.id,quote_id=quote.id,gross_amount_minor=draft.gross_amount_minor,redeemed_points=redeemed,paid_amount_minor=paid,points_earned=earned,qualification_amount_minor=qualification,tier_before_id=policy.effective_tier.id,tier_after_id=tier_after.id,loyalty_effects_snapshot=snapshot,category_counts_snapshot=dict(draft.category_counts),idempotency_key=idempotency_key,actor_staff_id=actor_staff_id);session.add(order);await session.flush()
   if redeemed:await self.points.apply(session,organization_id=organization_id,customer_id=draft.customer_id,delta=-redeemed,entry_type=LedgerEntryType.REDEEM,reference_type="order",reference_id=order.id,idempotency_key=f"{idempotency_key}:redeem")
   if earned:await self.points.apply(session,organization_id=organization_id,customer_id=draft.customer_id,delta=earned,entry_type=LedgerEntryType.EARN,reference_type="order",reference_id=order.id,idempotency_key=f"{idempotency_key}:earn")
   if ids:
-   rewards=(await session.scalars(select(CustomerReward).where(CustomerReward.id.in_(ids),CustomerReward.customer_id==draft.customer_id).with_for_update())).all()
+   rewards=(await session.scalars(select(CustomerReward).where(CustomerReward.id.in_(ids),CustomerReward.customer_id==draft.customer_id).order_by(CustomerReward.id.asc()).with_for_update())).all()
    if len(rewards)!=len(ids):raise RewardSelectionInvalid("Selected reward changed before confirmation")
    for r in rewards:
     if r.quantity_remaining<=0 or r.status!="active":raise RewardSelectionInvalid("Selected reward is unavailable")
