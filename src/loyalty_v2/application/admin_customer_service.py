@@ -12,6 +12,7 @@ from loyalty_v2.application.customer_policy_service import CustomerPolicyService
 from loyalty_v2.application.services import CustomerNotFound, PointsService
 from loyalty_v2.db.category_models import SaleCategory
 from loyalty_v2.db.customer_policy_models import CustomerRedemptionOverride, CustomerTierOverride
+from loyalty_v2.db.engagement_models import CustomerFeedback
 from loyalty_v2.db.milestone_models import CustomerCategoryCounter
 from loyalty_v2.db.models import Customer, CustomerLoyaltyState, LedgerEntryType, LoyaltyTier, PointsAccount, PointsLedgerEntry
 from loyalty_v2.db.order_models import Order
@@ -77,6 +78,12 @@ class AdminCustomerService:
             CustomerReward.customer_id == customer_id,
         ).order_by(CustomerReward.issued_at.desc()).limit(limit))
         return rows.all()
+
+    async def feedback(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, limit: int = 100) -> list[CustomerFeedback]:
+        return list((await session.scalars(select(CustomerFeedback).where(
+            CustomerFeedback.organization_id == organization_id,
+            CustomerFeedback.customer_id == customer_id,
+        ).order_by(CustomerFeedback.created_at.desc(), CustomerFeedback.id.desc()).limit(limit))).all())
 
     async def category_counters(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID):
         rows = await session.execute(select(CustomerCategoryCounter, SaleCategory).join(
