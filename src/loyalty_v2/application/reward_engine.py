@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loyalty_v2.application.segment_service import SegmentService
 from loyalty_v2.db.reward_models import Campaign, CustomerReward, RewardDefinition
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +29,9 @@ class LoyaltyEffects:
     cashback_multiplier: int
 
 class RewardCampaignEngine:
+    def __init__(self) -> None:
+        self.segments = SegmentService()
+
     async def resolve(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, gross_amount_minor: int, selected_reward_ids: list[UUID] | None = None, category_counts: dict[str,int] | None = None, now: datetime | None = None) -> LoyaltyEffects:
         now = now or datetime.now(timezone.utc)
         categories = {str(k): max(int(v),0) for k,v in (category_counts or {}).items() if int(v) > 0}
@@ -43,7 +47,9 @@ class RewardCampaignEngine:
                 discount=self._reward_discount(d,gross_amount_minor,categories)
                 reward_effects.append(RewardEffect(cr.id,discount)); total_discount+=discount
         campaigns=(await session.scalars(select(Campaign).where(Campaign.organization_id==organization_id,Campaign.is_active.is_(True),(Campaign.starts_at.is_(None)|(Campaign.starts_at<=now)),(Campaign.ends_at.is_(None)|(Campaign.ends_at>=now))).order_by(Campaign.priority.asc(),Campaign.id.asc()))).all()
-        applicable=[c for c in campaigns if self._campaign_matches(c,gross_amount_minor,categories)]
+        needs_segments=any((c.conditions or {}).get("segment_codes") for c in campaigns)
+        segment_codes=await self.segments.active_codes_for_customer(session,organization_id=organization_id,customer_id=customer_id,now=now) if needs_segments else set()
+        applicable=[c for c in campaigns if self._campaign_matches(c,gross_amount_minor,categories,segment_codes)]
         resolved:list[Campaign]=[]
         for campaign in applicable:
             if not resolved:
@@ -76,7 +82,7 @@ class RewardCampaignEngine:
         return 0
 
     @staticmethod
-    def _campaign_matches(campaign: Campaign, gross_amount_minor:int, categories:dict[str,int]) -> bool:
+    def _campaign_matches(campaign: Campaign, gross_amount_minor:int, categories:dict[str,int], customer_segment_codes:set[str]|None=None) -> bool:
         c=campaign.conditions or {}; minimum=int(c.get("minimum_spend_minor",0) or 0); maximum=c.get("maximum_spend_minor")
         if gross_amount_minor<minimum or (maximum is not None and gross_amount_minor>int(maximum)): return False
         code=c.get("category_code")
@@ -84,4 +90,6 @@ class RewardCampaignEngine:
         required=c.get("category_counts") or {}
         for key,value in required.items():
             if categories.get(str(key),0)<int(value): return False
+        required_segments={str(x) for x in (c.get("segment_codes") or [])}
+        if required_segments and not required_segments.issubset(customer_segment_codes or set()): return False
         return True
