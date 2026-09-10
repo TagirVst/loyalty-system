@@ -49,11 +49,12 @@ async def _draft_for_principal(session: AsyncSession, draft_id: UUID, organizati
 
 @router.post("/staff/login", response_model=StaffSessionResponse)
 async def login(body: StaffLoginRequest, session: AsyncSession = Depends(get_session)) -> StaffSessionResponse:
-    try:
-        async with session.begin():
-            auth = await staff_auth.authenticate(session, organization_id=body.organization_id, terminal_id=body.terminal_id, pin=body.pin)
-    except DomainError as exc:
-        raise domain_error(exc) from exc
+    async with session.begin():
+        attempt = await staff_auth.authenticate_attempt(session, organization_id=body.organization_id, terminal_id=body.terminal_id, pin=body.pin)
+    if attempt.error:
+        raise domain_error(attempt.error)
+    auth = attempt.auth_session
+    assert auth is not None
     return StaffSessionResponse(staff_session_id=auth.id, staff_id=auth.staff_id, terminal_id=auth.terminal_id, status=auth.status)
 
 
@@ -84,10 +85,10 @@ async def create_draft(body: CreateDraftRequest, session: AsyncSession = Depends
         async with session.begin():
             principal = await principals.staff(session, staff_session_id=body.staff_session_id)
             principal.require(Permission.SALE_CREATE)
-            draft = await orders.create_draft(session, organization_id=principal.organization_id, location_id=principal.location_id, gross_amount_minor=body.gross_amount_minor, requested_points=body.requested_points, currency_code=body.currency_code, selected_reward_ids=body.selected_reward_ids)
+            draft = await orders.create_draft(session, organization_id=principal.organization_id, location_id=principal.location_id, gross_amount_minor=body.gross_amount_minor, requested_points=body.requested_points, currency_code=body.currency_code, selected_reward_ids=body.selected_reward_ids, category_counts=body.category_counts)
     except DomainError as exc:
         raise domain_error(exc) from exc
-    return DraftResponse(draft_id=draft.id, version=draft.version, customer_id=draft.customer_id, gross_amount_minor=draft.gross_amount_minor, requested_points=draft.requested_points, selected_reward_ids=[UUID(x) for x in draft.selected_reward_ids])
+    return DraftResponse(draft_id=draft.id, version=draft.version, customer_id=draft.customer_id, gross_amount_minor=draft.gross_amount_minor, requested_points=draft.requested_points, selected_reward_ids=[UUID(x) for x in draft.selected_reward_ids], category_counts=draft.category_counts)
 
 
 @router.post("/order-drafts/{draft_id}/identify", response_model=DraftResponse)
@@ -100,7 +101,7 @@ async def identify(draft_id: UUID, body: IdentifyDraftRequest, session: AsyncSes
             draft = await identification.attach_to_draft(session, organization_id=principal.organization_id, draft_id=draft_id, code=body.code)
     except DomainError as exc:
         raise domain_error(exc) from exc
-    return DraftResponse(draft_id=draft.id, version=draft.version, customer_id=draft.customer_id, gross_amount_minor=draft.gross_amount_minor, requested_points=draft.requested_points, selected_reward_ids=[UUID(x) for x in draft.selected_reward_ids])
+    return DraftResponse(draft_id=draft.id, version=draft.version, customer_id=draft.customer_id, gross_amount_minor=draft.gross_amount_minor, requested_points=draft.requested_points, selected_reward_ids=[UUID(x) for x in draft.selected_reward_ids], category_counts=draft.category_counts)
 
 
 @router.post("/order-drafts/{draft_id}/quote", response_model=QuoteResponse)
@@ -114,7 +115,7 @@ async def quote(draft_id: UUID, body: QuoteRequest, session: AsyncSession = Depe
     except DomainError as exc:
         raise domain_error(exc) from exc
     q = result.quote
-    return QuoteResponse(quote_id=q.id, draft_id=q.draft_id, tier_id=q.tier_id, potential_tier_id=q.potential_tier_id, gross_amount_minor=q.gross_amount_minor, amount_after_rewards_minor=q.amount_after_rewards_minor, points_balance=result.points_balance, max_redeemable_points=q.max_redeemable_points, redeemed_points=q.redeemed_points, paid_amount_minor=q.paid_amount_minor, points_to_earn=q.points_to_earn, qualification_amount_minor=q.qualification_amount_minor)
+    return QuoteResponse(quote_id=q.id, draft_id=q.draft_id, tier_id=q.tier_id, potential_tier_id=q.potential_tier_id, gross_amount_minor=q.gross_amount_minor, amount_after_rewards_minor=q.amount_after_rewards_minor, points_balance=result.points_balance, max_redeemable_points=q.max_redeemable_points, redeemed_points=q.redeemed_points, paid_amount_minor=q.paid_amount_minor, points_to_earn=q.points_to_earn, qualification_amount_minor=q.qualification_amount_minor, category_counts=q.category_counts_snapshot)
 
 
 @router.post("/order-drafts/{draft_id}/confirm", response_model=OrderResponse)
@@ -127,7 +128,7 @@ async def confirm(draft_id: UUID, body: ConfirmOrderRequest, session: AsyncSessi
             order = await orders.confirm(session, organization_id=principal.organization_id, draft_id=draft_id, quote_id=body.quote_id, idempotency_key=body.idempotency_key, actor_staff_id=principal.staff_id)
     except DomainError as exc:
         raise domain_error(exc) from exc
-    return OrderResponse(order_id=order.id, customer_id=order.customer_id, gross_amount_minor=order.gross_amount_minor, redeemed_points=order.redeemed_points, paid_amount_minor=order.paid_amount_minor, points_earned=order.points_earned, tier_before_id=order.tier_before_id, tier_after_id=order.tier_after_id, status=order.status)
+    return OrderResponse(order_id=order.id, customer_id=order.customer_id, gross_amount_minor=order.gross_amount_minor, redeemed_points=order.redeemed_points, paid_amount_minor=order.paid_amount_minor, points_earned=order.points_earned, tier_before_id=order.tier_before_id, tier_after_id=order.tier_after_id, status=order.status, category_counts=order.category_counts_snapshot)
 
 
 @router.post("/orders/{order_id}/refund-preview", response_model=RefundPreviewResponse)
