@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from loyalty_v2.core.config import get_settings
 from loyalty_v2.db.base import Base
 from loyalty_v2.db import models  # noqa: F401
+from loyalty_v2.db import order_models  # noqa: F401
 
 
 config = context.config
