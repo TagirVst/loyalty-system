@@ -40,7 +40,11 @@ def upgrade() -> None:
         WHERE telegram_id IS NOT NULL
         ON CONFLICT DO NOTHING
     """))
+    op.drop_constraint("uq_customers_org_telegram", "customers", type_="unique")
+    op.alter_column("customers", "telegram_id", existing_type=sa.BigInteger(), nullable=True)
 
 
 def downgrade() -> None:
+    op.alter_column("customers", "telegram_id", existing_type=sa.BigInteger(), nullable=False)
+    op.create_unique_constraint("uq_customers_org_telegram", "customers", ["organization_id", "telegram_id"])
     op.drop_table("customer_auth_identities")
