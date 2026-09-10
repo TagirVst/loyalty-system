@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from loyalty_v2.api.admin_config_routes import router as admin_config_router
 from loyalty_v2.api.admin_customer_routes import router as admin_customer_router
+from loyalty_v2.api.admin_notification_routes import router as admin_notification_router
 from loyalty_v2.api.admin_staff_routes import router as admin_staff_router
 from loyalty_v2.api.customer_routes import router as customer_router
 from loyalty_v2.api.engagement_routes import router as engagement_router
@@ -16,6 +17,7 @@ app.include_router(secure_policy_router)
 app.include_router(admin_config_router)
 app.include_router(admin_staff_router)
 app.include_router(admin_customer_router)
+app.include_router(admin_notification_router)
 app.include_router(engagement_router)
 app.include_router(customer_router)
 
