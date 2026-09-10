@@ -11,10 +11,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,9 +54,7 @@ class Location(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("organization_id", "code", name="uq_locations_organization_code"),
     )
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     address: Mapped[str | None] = mapped_column(String(500))
@@ -69,9 +69,7 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("organization_id", "phone", name="uq_customers_org_phone"),
     )
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     first_name: Mapped[str] = mapped_column(String(160), nullable=False)
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -83,16 +81,10 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Staff(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "staff"
-    __table_args__ = (
-        UniqueConstraint("organization_id", "pin_fingerprint", name="uq_staff_org_pin_fingerprint"),
-    )
+    __table_args__ = (UniqueConstraint("organization_id", "pin_fingerprint", name="uq_staff_org_pin_fingerprint"),)
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    location_id: Mapped[UUID] = mapped_column(
-        ForeignKey("locations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    location_id: Mapped[UUID] = mapped_column(ForeignKey("locations.id", ondelete="RESTRICT"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     pin_hash: Mapped[str | None] = mapped_column(String(255))
@@ -109,9 +101,7 @@ class LoyaltyTier(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("cashback_basis_points >= 0", name="cashback_nonnegative"),
     )
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
     minimum_spend_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -126,15 +116,9 @@ class CustomerLoyaltyState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("qualification_spend_minor >= 0", name="qualification_spend_nonnegative"),
     )
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    customer_id: Mapped[UUID] = mapped_column(
-        ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    automatic_tier_id: Mapped[UUID] = mapped_column(
-        ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False
-    )
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
+    automatic_tier_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
     qualification_spend_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     last_purchase_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     inactivity_steps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -147,12 +131,8 @@ class PointsAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("balance >= 0", name="balance_nonnegative"),
     )
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    customer_id: Mapped[UUID] = mapped_column(
-        ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
@@ -161,24 +141,23 @@ class PointsLedgerEntry(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "points_ledger_entries"
     __table_args__ = (
         CheckConstraint("delta <> 0", name="delta_nonzero"),
+        Index(
+            "uq_points_ledger_entries_org_idempotency",
+            "organization_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    customer_id: Mapped[UUID] = mapped_column(
-        ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    account_id: Mapped[UUID] = mapped_column(
-        ForeignKey("points_accounts.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("points_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
     entry_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     delta: Mapped[int] = mapped_column(BigInteger, nullable=False)
     balance_after: Mapped[int] = mapped_column(BigInteger, nullable=False)
     reference_type: Mapped[str | None] = mapped_column(String(64))
     reference_id: Mapped[UUID | None] = mapped_column(nullable=True)
     reason: Mapped[str | None] = mapped_column(String(500))
-    idempotency_key: Mapped[str | None] = mapped_column(String(128), index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True, server_default=func.now()
-    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, server_default=func.now())
