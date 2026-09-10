@@ -71,6 +71,7 @@ class CreateDraftRequest(BaseModel):
     staff_session_id: UUID
     gross_amount_minor: int = Field(gt=0)
     requested_points: int = Field(default=0, ge=0)
+    selected_reward_ids: list[UUID] = Field(default_factory=list)
     currency_code: str = Field(default="RUB", min_length=3, max_length=3)
 
 
@@ -80,6 +81,7 @@ class DraftResponse(BaseModel):
     customer_id: UUID | None
     gross_amount_minor: int
     requested_points: int
+    selected_reward_ids: list[UUID] = Field(default_factory=list)
 
 
 class IdentifyDraftRequest(BaseModel):
