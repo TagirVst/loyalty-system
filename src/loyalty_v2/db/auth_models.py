@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from loyalty_v2.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -24,6 +24,14 @@ class StaffTerminal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class StaffSession(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "staff_sessions"
+    __table_args__ = (
+        Index(
+            "uq_staff_sessions_active_terminal",
+            "terminal_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
 
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     terminal_id: Mapped[UUID] = mapped_column(ForeignKey("staff_terminals.id", ondelete="RESTRICT"), nullable=False, index=True)
