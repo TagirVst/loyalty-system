@@ -93,10 +93,25 @@ async def create_order_draft(body: CreateDraftRequest, session: AsyncSession = D
             auth_session, _ = await staff_auth.require(session, staff_session_id=body.staff_session_id, permission=Permission.SALE_CREATE)
             if auth_session.organization_id != body.organization_id:
                 raise HTTPException(status_code=403, detail={"code": "ORGANIZATION_MISMATCH"})
-            draft = await orders.create_draft(session, organization_id=body.organization_id, location_id=body.location_id, gross_amount_minor=body.gross_amount_minor, requested_points=body.requested_points, currency_code=body.currency_code)
+            draft = await orders.create_draft(
+                session,
+                organization_id=body.organization_id,
+                location_id=body.location_id,
+                gross_amount_minor=body.gross_amount_minor,
+                requested_points=body.requested_points,
+                currency_code=body.currency_code,
+                selected_reward_ids=body.selected_reward_ids,
+            )
     except DomainError as exc:
         raise _domain_http_error(exc) from exc
-    return DraftResponse(draft_id=draft.id, version=draft.version, customer_id=draft.customer_id, gross_amount_minor=draft.gross_amount_minor, requested_points=draft.requested_points)
+    return DraftResponse(
+        draft_id=draft.id,
+        version=draft.version,
+        customer_id=draft.customer_id,
+        gross_amount_minor=draft.gross_amount_minor,
+        requested_points=draft.requested_points,
+        selected_reward_ids=[UUID(value) for value in draft.selected_reward_ids],
+    )
 
 
 @router.post("/order-drafts/{draft_id}/identify", response_model=DraftResponse)
@@ -107,7 +122,14 @@ async def identify_order_draft(draft_id: UUID, body: IdentifyDraftRequest, sessi
             draft = await identification.attach_to_draft(session, organization_id=body.organization_id, draft_id=draft_id, code=body.code)
     except DomainError as exc:
         raise _domain_http_error(exc) from exc
-    return DraftResponse(draft_id=draft.id, version=draft.version, customer_id=draft.customer_id, gross_amount_minor=draft.gross_amount_minor, requested_points=draft.requested_points)
+    return DraftResponse(
+        draft_id=draft.id,
+        version=draft.version,
+        customer_id=draft.customer_id,
+        gross_amount_minor=draft.gross_amount_minor,
+        requested_points=draft.requested_points,
+        selected_reward_ids=[UUID(value) for value in draft.selected_reward_ids],
+    )
 
 
 @router.post("/order-drafts/{draft_id}/quote", response_model=QuoteResponse)
