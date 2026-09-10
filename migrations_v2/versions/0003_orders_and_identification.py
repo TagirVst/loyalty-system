@@ -28,12 +28,18 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["customer_id"], ["customers.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("organization_id", "code", "status", name="uq_identification_active_code_scope"),
     )
     op.create_index("ix_identification_sessions_customer_id", "identification_sessions", ["customer_id"])
     op.create_index("ix_identification_sessions_code", "identification_sessions", ["code"])
     op.create_index("ix_identification_sessions_status", "identification_sessions", ["status"])
     op.create_index("ix_identification_sessions_expires_at", "identification_sessions", ["expires_at"])
+    op.create_index(
+        "uq_identification_active_code_scope",
+        "identification_sessions",
+        ["organization_id", "code"],
+        unique=True,
+        postgresql_where=sa.text("status = 'active'"),
+    )
 
     op.create_table(
         "order_drafts",
