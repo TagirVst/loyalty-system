@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from loyalty_v2.db.base import Base, UUIDPrimaryKeyMixin
@@ -23,12 +23,15 @@ class CustomerNotificationPreference(UUIDPrimaryKeyMixin, Base):
 class NotificationOutbox(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "notification_outbox"
     __table_args__ = (
+        CheckConstraint("(recipient_type = 'customer' AND customer_id IS NOT NULL AND recipient_address IS NULL) OR (recipient_type = 'staff_chat' AND customer_id IS NULL AND recipient_address IS NOT NULL)", name="notification_recipient_shape"),
         Index("uq_notification_outbox_org_idempotency", "organization_id", "idempotency_key", unique=True, postgresql_where=text("idempotency_key IS NOT NULL")),
         Index("ix_notification_outbox_due", "status", "next_attempt_at"),
     )
 
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_type: Mapped[str] = mapped_column(String(20), nullable=False, default="customer")
+    customer_id: Mapped[UUID | None] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
+    recipient_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram")
     kind: Mapped[str] = mapped_column(String(32), nullable=False, default="service")
     template_code: Mapped[str | None] = mapped_column(String(80))
