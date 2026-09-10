@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from loyalty_v2.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
+
+class IdentificationSession(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "identification_sessions"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", "status", name="uq_identification_active_code_scope"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(5), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class OrderDraft(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "order_drafts"
+    __table_args__ = (
+        CheckConstraint("gross_amount_minor > 0", name="gross_amount_positive"),
+        CheckConstraint("requested_points >= 0", name="requested_points_nonnegative"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    location_id: Mapped[UUID] = mapped_column(ForeignKey("locations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    customer_id: Mapped[UUID | None] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    identification_session_id: Mapped[UUID | None] = mapped_column(ForeignKey("identification_sessions.id", ondelete="RESTRICT"))
+    gross_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency_code: Mapped[str] = mapped_column(String(3), nullable=False, default="RUB")
+    requested_points: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class OrderQuote(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "order_quotes"
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    draft_id: Mapped[UUID] = mapped_column(ForeignKey("order_drafts.id", ondelete="CASCADE"), nullable=False, index=True)
+    draft_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    tier_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
+    gross_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    amount_after_rewards_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_redeemable_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    redeemed_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    points_to_earn: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    qualification_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    potential_tier_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class Order(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "orders_v2"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_orders_v2_org_idempotency"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    location_id: Mapped[UUID] = mapped_column(ForeignKey("locations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    draft_id: Mapped[UUID] = mapped_column(ForeignKey("order_drafts.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    quote_id: Mapped[UUID] = mapped_column(ForeignKey("order_quotes.id", ondelete="RESTRICT"), nullable=False)
+    gross_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    redeemed_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    points_earned: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    qualification_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    tier_before_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
+    tier_after_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="confirmed")
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
