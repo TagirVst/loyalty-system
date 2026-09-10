@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,21 +7,20 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loyalty_v2.application.admin_customer_service import AdminCustomerService
 from loyalty_v2.application.audit_service import AuditService
 from loyalty_v2.application.auth_service import Permission
 from loyalty_v2.application.feedback_service import FeedbackError, FeedbackService
 from loyalty_v2.application.principal import PrincipalService
-from loyalty_v2.application.segment_service import SegmentService
-from loyalty_v2.application.services import DomainError
-from loyalty_v2.db.engagement_models import CustomerFeedback, CustomerSegment, FeedbackSettings
-from loyalty_v2.db.models import Customer
+from loyalty_v2.application.services import CustomerNotFound, CustomerService, DomainError
+from loyalty_v2.db.engagement_models import CustomerFeedback, CustomerSegment
 from loyalty_v2.db.session import get_session
 
 router = APIRouter(prefix="/api/v2", tags=["engagement"])
 principals = PrincipalService()
 feedback = FeedbackService()
-segments = SegmentService()
 audit = AuditService()
+admin_customers = AdminCustomerService()
 
 
 class CustomerFeedbackRequest(BaseModel):
@@ -69,13 +67,19 @@ async def _admin(session: AsyncSession, staff_session_id: UUID):
 
 def _err(exc: DomainError) -> HTTPException:
     code = exc.code
-    http = status.HTTP_403_FORBIDDEN if code == "PERMISSION_DENIED" else status.HTTP_422_UNPROCESSABLE_ENTITY
+    if code == "PERMISSION_DENIED": http = status.HTTP_403_FORBIDDEN
+    elif code == "STAFF_SESSION_INVALID": http = status.HTTP_401_UNAUTHORIZED
+    elif code == "CUSTOMER_NOT_FOUND": http = status.HTTP_404_NOT_FOUND
+    else: http = status.HTTP_422_UNPROCESSABLE_ENTITY
     return HTTPException(http, detail={"code": code, "message": str(exc)})
+
+
+def _feedback_item(x: CustomerFeedback) -> dict:
+    return {"id": x.id, "customer_id": x.customer_id, "order_id": x.order_id, "rating": x.rating, "comment": x.comment, "status": x.status, "routed_to_admins": x.routed_to_admins, "external_review_offered": x.external_review_offered, "created_at": x.created_at, "resolved_at": x.resolved_at, "resolved_by_staff_id": x.resolved_by_staff_id, "resolution_note": x.resolution_note}
 
 
 @router.post("/feedback", status_code=201)
 async def submit_feedback(body: CustomerFeedbackRequest, session: AsyncSession = Depends(get_session)) -> dict:
-    from loyalty_v2.application.services import CustomerService, CustomerNotFound
     customers = CustomerService()
     try:
         async with session.begin():
@@ -132,7 +136,16 @@ async def list_feedback(staff_session_id: UUID, unresolved_only: bool = True, se
         stmt = select(CustomerFeedback).where(CustomerFeedback.organization_id == p.organization_id)
         if unresolved_only: stmt = stmt.where(CustomerFeedback.status != "resolved")
         rows = (await session.scalars(stmt.order_by(CustomerFeedback.created_at.desc()).limit(200))).all()
-        return [{"id": x.id, "customer_id": x.customer_id, "order_id": x.order_id, "rating": x.rating, "comment": x.comment, "status": x.status, "routed_to_admins": x.routed_to_admins, "created_at": x.created_at, "resolved_at": x.resolved_at} for x in rows]
+        return [_feedback_item(x) for x in rows]
+    except DomainError as exc: raise _err(exc) from exc
+
+
+@router.get("/admin/customers/{customer_id}/feedback")
+async def customer_feedback(customer_id: UUID, staff_session_id: UUID, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    try:
+        p = await _admin(session, staff_session_id)
+        await admin_customers.summary(session, organization_id=p.organization_id, customer_id=customer_id)
+        return [_feedback_item(x) for x in await admin_customers.feedback(session, organization_id=p.organization_id, customer_id=customer_id)]
     except DomainError as exc: raise _err(exc) from exc
 
 
