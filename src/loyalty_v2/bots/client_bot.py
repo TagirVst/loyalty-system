@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from loyalty_v2.application.client_service import ClientService
 from loyalty_v2.application.order_service import IdentificationService
-from loyalty_v2.application.services import CustomerAlreadyExists, CustomerService
+from loyalty_v2.application.services import CustomerAlreadyExists, CustomerNotFound, CustomerService
 
 
 class Registration(StatesGroup):
@@ -32,8 +32,11 @@ class ClientBot:
         dp = Dispatcher(); dp.include_router(self.router); return dp
 
     async def _customer_id(self, session: AsyncSession, telegram_id: int) -> UUID | None:
-        customer = await self.customers.find_by_identity(session, organization_id=self.organization_id, provider="telegram", external_subject=str(telegram_id))
-        return customer.id if customer else None
+        try:
+            customer = await self.customers.by_identity(session, organization_id=self.organization_id, provider="telegram", external_subject=str(telegram_id))
+        except CustomerNotFound:
+            return None
+        return customer.id
 
     @staticmethod
     def main_keyboard() -> ReplyKeyboardMarkup:
