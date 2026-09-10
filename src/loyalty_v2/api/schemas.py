@@ -1,130 +1,40 @@
 from datetime import date, datetime
 from uuid import UUID
-
 from pydantic import BaseModel, Field
 
-
 class RegisterCustomerRequest(BaseModel):
-    organization_id: UUID
-    telegram_id: int = Field(gt=0)
-    first_name: str = Field(min_length=1, max_length=160)
-    phone: str = Field(min_length=7, max_length=32)
-    birth_date: date
-
-
+    organization_id: UUID; telegram_id: int = Field(gt=0); first_name: str = Field(min_length=1,max_length=160); phone: str = Field(min_length=7,max_length=32); birth_date: date
 class CustomerResponse(BaseModel):
-    id: UUID
-    first_name: str
-    phone: str
-    balance: int
-    tier_id: UUID
-    qualification_spend_minor: int
-
-
+    id: UUID; first_name: str; phone: str; balance: int; tier_id: UUID; qualification_spend_minor: int
 class AdjustPointsRequest(BaseModel):
-    organization_id: UUID
-    staff_session_id: UUID
-    delta: int
-    reason: str = Field(min_length=1, max_length=500)
-    idempotency_key: str = Field(min_length=1, max_length=128)
-
-
+    organization_id: UUID; staff_session_id: UUID; delta: int; reason: str = Field(min_length=1,max_length=500); idempotency_key: str = Field(min_length=1,max_length=128)
 class PointsEntryResponse(BaseModel):
-    entry_id: UUID
-    customer_id: UUID
-    delta: int
-    balance_after: int
-    entry_type: str
-
-
+    entry_id: UUID; customer_id: UUID; delta: int; balance_after: int; entry_type: str
 class StaffLoginRequest(BaseModel):
-    organization_id: UUID
-    terminal_id: UUID
-    pin: str = Field(pattern=r"^\d{6}$")
-
-
+    organization_id: UUID; terminal_id: UUID; pin: str = Field(pattern=r"^\d{6}$")
 class StaffSessionResponse(BaseModel):
-    staff_session_id: UUID
-    staff_id: UUID
-    terminal_id: UUID
-    status: str
-
-
-class StaffLogoutRequest(BaseModel):
-    staff_session_id: UUID
-
-
-class GenerateCodeRequest(BaseModel):
-    organization_id: UUID
-    customer_id: UUID
-
-
-class IdentificationCodeResponse(BaseModel):
-    identification_id: UUID
-    code: str
-    expires_at: datetime
-
-
+    staff_session_id: UUID; staff_id: UUID; terminal_id: UUID; status: str
+class StaffLogoutRequest(BaseModel): staff_session_id: UUID
+class GenerateCodeRequest(BaseModel): organization_id: UUID; customer_id: UUID
+class IdentificationCodeResponse(BaseModel): identification_id: UUID; code: str; expires_at: datetime
 class CreateDraftRequest(BaseModel):
-    organization_id: UUID
-    location_id: UUID
-    staff_session_id: UUID
-    gross_amount_minor: int = Field(gt=0)
-    requested_points: int = Field(default=0, ge=0)
-    selected_reward_ids: list[UUID] = Field(default_factory=list)
-    currency_code: str = Field(default="RUB", min_length=3, max_length=3)
-
-
+    organization_id: UUID; location_id: UUID; staff_session_id: UUID; gross_amount_minor: int = Field(gt=0); requested_points: int = Field(default=0,ge=0); selected_reward_ids: list[UUID] = Field(default_factory=list); currency_code: str = Field(default="RUB",min_length=3,max_length=3)
 class DraftResponse(BaseModel):
-    draft_id: UUID
-    version: int
-    customer_id: UUID | None
-    gross_amount_minor: int
-    requested_points: int
-    selected_reward_ids: list[UUID] = Field(default_factory=list)
-
-
-class IdentifyDraftRequest(BaseModel):
-    organization_id: UUID
-    staff_session_id: UUID
-    code: str = Field(pattern=r"^\d{5}$")
-
-
-class QuoteRequest(BaseModel):
-    organization_id: UUID
-    staff_session_id: UUID
-
-
+    draft_id: UUID; version: int; customer_id: UUID|None; gross_amount_minor: int; requested_points: int; selected_reward_ids: list[UUID] = Field(default_factory=list)
+class IdentifyDraftRequest(BaseModel): organization_id: UUID; staff_session_id: UUID; code: str = Field(pattern=r"^\d{5}$")
+class QuoteRequest(BaseModel): organization_id: UUID; staff_session_id: UUID
 class QuoteResponse(BaseModel):
-    quote_id: UUID
-    draft_id: UUID
-    tier_id: UUID
-    potential_tier_id: UUID
-    gross_amount_minor: int
-    amount_after_rewards_minor: int
-    points_balance: int
-    max_redeemable_points: int
-    redeemed_points: int
-    paid_amount_minor: int
-    points_to_earn: int
-    qualification_amount_minor: int
-    expires_at: datetime
-
-
-class ConfirmOrderRequest(BaseModel):
-    organization_id: UUID
-    staff_session_id: UUID
-    quote_id: UUID
-    idempotency_key: str = Field(min_length=1, max_length=128)
-
-
+    quote_id: UUID; draft_id: UUID; tier_id: UUID; potential_tier_id: UUID; gross_amount_minor: int; amount_after_rewards_minor: int; points_balance: int; max_redeemable_points: int; redeemed_points: int; paid_amount_minor: int; points_to_earn: int; qualification_amount_minor: int; expires_at: datetime
+class ConfirmOrderRequest(BaseModel): organization_id: UUID; staff_session_id: UUID; quote_id: UUID; idempotency_key: str = Field(min_length=1,max_length=128)
 class OrderResponse(BaseModel):
-    order_id: UUID
-    customer_id: UUID
-    gross_amount_minor: int
-    redeemed_points: int
-    paid_amount_minor: int
-    points_earned: int
-    tier_before_id: UUID
-    tier_after_id: UUID
-    status: str
+    order_id: UUID; customer_id: UUID; gross_amount_minor: int; redeemed_points: int; paid_amount_minor: int; points_earned: int; tier_before_id: UUID; tier_after_id: UUID; status: str
+class RefundPreviewRequest(BaseModel):
+    organization_id: UUID; staff_session_id: UUID; gross_refund_minor: int|None = Field(default=None,gt=0)
+class RefundPreviewResponse(BaseModel):
+    gross_refund_minor: int; paid_refund_minor: int; restored_points: int; reversed_earned_points: int; qualification_reversal_minor: int; remaining_gross_minor: int
+class ConfirmRefundRequest(RefundPreviewRequest):
+    reason: str = Field(min_length=1,max_length=500); idempotency_key: str = Field(min_length=1,max_length=128)
+class RefundResponse(BaseModel):
+    refund_id: UUID; order_id: UUID; refund_type: str; gross_refund_minor: int; paid_refund_minor: int; restored_points: int; reversed_earned_points: int
+class CancelOwnOrderRequest(BaseModel):
+    organization_id: UUID; staff_session_id: UUID; reason: str = Field(min_length=1,max_length=500); idempotency_key: str = Field(min_length=1,max_length=128)
