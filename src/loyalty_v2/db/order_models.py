@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from loyalty_v2.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -44,6 +44,7 @@ class OrderDraft(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     gross_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     currency_code: Mapped[str] = mapped_column(String(3), nullable=False, default="RUB")
     requested_points: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    selected_reward_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
@@ -63,6 +64,7 @@ class OrderQuote(UUIDPrimaryKeyMixin, Base):
     points_to_earn: Mapped[int] = mapped_column(BigInteger, nullable=False)
     qualification_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     potential_tier_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
+    loyalty_effects_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
@@ -85,6 +87,7 @@ class Order(UUIDPrimaryKeyMixin, Base):
     qualification_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     tier_before_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
     tier_after_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_tiers.id", ondelete="RESTRICT"), nullable=False)
+    loyalty_effects_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="confirmed")
     confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
