@@ -2,7 +2,7 @@
 
 ## Подход
 
-На старте используем **модульный монолит**, а не микросервисы. Это проще в разработке и эксплуатации, но границы модулей проектируются так, чтобы при реальной необходимости модуль можно было вынести позже.
+На старте используем **модульный монолит**, а не микросервисы. Это проще в разработке и эксплуатации, но границы модулей проектируются так, чтобы в будущем loyalty мог стать частью большой Cafe Management Platform без переписывания core.
 
 ## Предлагаемая структура
 
@@ -18,11 +18,8 @@ backend/
       exceptions/
     modules/
       customers/
-        domain/
-        application/
-        infrastructure/
-        api/
       staff/
+      locations/
       orders/
       loyalty/
       rewards/
@@ -35,12 +32,11 @@ backend/
     db/
     jobs/
 
-bots/
-  client_bot/
-  staff_bot/
-  shared/
-
-admin/
+interfaces/
+  telegram/
+    client_bot/
+    staff_bot/
+  admin/
 
 tests/
   unit/
@@ -50,36 +46,61 @@ tests/
 docs/
 ```
 
+Каждый доменный модуль разделяется минимум на domain/application/infrastructure/api по мере необходимости. Не требуется искусственно создавать одинаковое число слоёв в каждом маленьком модуле, но зависимости должны соблюдать направление внутрь домена.
+
 ## Правило зависимости
 
 ```text
-API/UI -> application/service -> domain -> repository interface
-                                      ^
-                                      |
-                              infrastructure implementation
+Telegram / Admin / External API
+            |
+            v
+      Backend API
+            |
+            v
+ Application services
+            |
+            v
+        Domain
+            |
+            v
+ Repository interfaces
+            ^
+            |
+ Infrastructure implementations
 ```
 
-Domain не знает о Telegram, HTML, FastAPI или iiko.
+Domain не знает о Telegram, HTML, FastAPI, iiko или конкретной POS.
+
+## Главный принцип
+
+**Backend является единственным источником истины.**
+
+Telegram-боты не рассчитывают cashback, уровни, лимиты списания, подарки или возвраты. Они только собирают ввод, вызывают backend и показывают результат.
+
+То же относится к будущей POS-интеграции и админке.
 
 ## Модули
 
 ### customers
-Профиль клиента, внешние идентификаторы, согласия, объединение дублей.
+Общий профиль клиента. В V2 основной пользовательский identity — Telegram. В будущем модуль может стать общеплатформенным.
 
 ### staff
-Сотрудники, роли, permissions, аутентификация.
+Сотрудники, роли, permissions, PIN-аутентификация на общем staff-устройстве, staff sessions.
+
+### locations
+Точки/филиалы. Даже если первая установка работает в одном кафе, архитектура должна позволять связывать сотрудников, заказы и интеграции с location без переноса всей модели позже.
 
 ### orders
-Заказ, расчёт, подтверждение, отмена, идемпотентность.
+Заказ как общая бизнес-сущность, источник заказа, ручной ввод/POS, расчёт, подтверждение, отмена, идемпотентность.
 
 ### loyalty
-Ledger баллов, баланс, правила начисления/списания, уровни и qualification.
+Ledger баллов, баланс, cashback policies, лимиты списания, qualification spend, автоматические и ручные tier overrides.
 
 ### rewards
-Типы наград, выданные награды, использование и истечение.
+Определения наград, выданные клиенту экземпляры, сроки, использование и отмена.
 
 ### campaigns
-Правила акций, аудитории, условия и эффекты.
+Расширяемые правила акций, аудитории, условия и эффекты.
 
 ### feedback
 Отзывы, идеи, обращения и обработка.
@@ -94,7 +115,55 @@ Read-модели/агрегации. Аналитика не должна ме�
 Кто, когда, откуда и что изменил.
 
 ### integrations
-Адаптеры внешних систем, webhook endpoints, mapping внешних ID.
+Адаптеры внешних систем, webhook endpoints, API credentials и mapping внешних ID.
+
+## Telegram как интерфейс
+
+### Client bot
+Клиентский бот идентифицирует пользователя по Telegram ID. Telegram ID приходит от Telegram API и не вводится клиентом вручную.
+
+### Staff bot
+Staff-бот может работать на одном общем Telegram-профиле/телефоне кафе.
+
+Рабочий сценарий:
+1. администратор разрешает Telegram-профиль как staff terminal;
+2. бариста вводит свой персональный 4–6-значный PIN;
+3. backend создаёт staff session;
+4. последующие операции привязываются к конкретному Staff;
+5. logout/timeout/администратор завершает session.
+
+PIN никогда не является идентификатором сотрудника и хранится только как hash. Авторизация и проверка permissions происходят на backend.
+
+## Идентификация клиента на продаже
+
+Пятизначный временный код является отдельной `IdentificationSession`, а не ID клиента.
+
+```text
+Customer -> IdentificationSession -> Order draft
+```
+
+Это позволяет позже добавить QR/NFC/другой способ, не меняя order и loyalty services.
+
+## Источники заказа
+
+Первая версия:
+
+```text
+ManualOrderProvider
+```
+
+Staff вводит сумму и категорийные количества вручную.
+
+Будущие варианты:
+
+```text
+IikoOrderProvider
+RKeeperOrderProvider
+CustomPOSProvider
+InternalCafeOrderProvider
+```
+
+Все providers преобразуют входные данные в единый доменный `OrderInput`. Loyalty-core не знает, откуда пришёл заказ.
 
 ## События
 
@@ -106,37 +175,70 @@ Read-модели/агрегации. Аналитика не должна ме�
 - `TierChanged`;
 - `RewardIssued`;
 - `RewardRedeemed`;
-- `CustomerBirthdayReached`.
+- `CustomerBirthdayReached`;
+- `StaffSessionStarted`;
+- `StaffSessionEnded`.
 
 На старте события могут обрабатываться внутри одного процесса. Интерфейс событий должен позволять позже подключить очередь без переписывания доменной логики.
 
 ## Расширяемость правил
 
-Нельзя размазывать правила по роутам и ботам. Использовать стратегии/политики, например:
+Нельзя размазывать правила по роутам и ботам. Использовать стратегии/политики.
+
+Примеры:
 
 ```python
 class EarningPolicy(Protocol):
     def calculate(self, context: OrderContext) -> PointsResult: ...
+
+class RedemptionPolicy(Protocol):
+    def calculate_limit(self, context: OrderContext) -> RedemptionLimit: ...
+
+class TierPolicy(Protocol):
+    def resolve(self, context: CustomerQualificationContext) -> TierResult: ...
 ```
 
 Новые политики регистрируются централизованно. Настройки конкретной политики хранятся в БД/конфигурации с валидацией.
 
+## Overrides
+
+Исключения для конкретного клиента не должны реализовываться `if customer_id == ...`.
+
+Нужна общая концепция временных/бессрочных override, например:
+- tier override;
+- redemption percentage override;
+- другие будущие customer-specific rules.
+
+Override содержит источник, автора, причину, `valid_from`, `valid_until` и audit trail.
+
 ## Транзакции
 
 Application service задаёт transaction boundary. Пример `ConfirmOrder` в одной транзакции:
-- блокирует/проверяет нужные данные;
+- проверяет staff session и permission;
+- проверяет identification session;
 - проверяет идемпотентность;
+- рассчитывает cashback/redemption исключительно на backend;
 - создаёт заказ;
 - создаёт ledger entries;
-- использует награду;
+- использует награду при необходимости;
+- обновляет qualification/tier state;
 - фиксирует audit/event records;
 - commit.
 
 Если любой шаг падает — не фиксируется ничего.
 
+## Отмена заказа
+
+`CancelOrder` не удаляет заказ и ledger entries. Он создаёт компенсирующие записи и восстанавливает связанное состояние в рамках одной транзакции.
+
+Для barista backend дополнительно проверяет:
+- операция создана этим Staff;
+- прошло не более 10 минут;
+- заказ ещё допускает barista cancellation.
+
 ## Конкурентность
 
-Баллы и награды требуют защиты от двойного использования. Использовать транзакции, ограничения БД и при необходимости row locking/optimistic concurrency. Нельзя реализовывать это только проверкой `if balance >= x` до отдельного commit.
+Баллы, коды и награды требуют защиты от двойного использования. Использовать транзакции, ограничения БД и при необходимости row locking/optimistic concurrency. Нельзя реализовывать это только проверкой до отдельного commit.
 
 ## API
 
@@ -154,6 +256,18 @@ API возвращает стабильные DTO и ошибки с машин�
 }
 ```
 
+## Интеграционный контракт
+
+Интеграции должны работать через стабильные application contracts. Конкретный adapter не должен импортироваться в loyalty domain.
+
+Необходимо предусмотреть:
+- REST API;
+- incoming/outgoing webhooks;
+- idempotency keys;
+- external ID mappings;
+- подписываемые/аутентифицированные machine-to-machine requests;
+- возможность позднее вынести event transport в очередь.
+
 ## Конфигурация
 
 Environment variables — только инфраструктурные секреты/адреса. Бизнес-настройки, которые должен менять администратор, хранятся в БД и валидируются.
@@ -166,7 +280,9 @@ Environment variables — только инфраструктурные секр
 
 Планировщик нужен для:
 - дней рождения;
-- истечения наград/баллов;
+- снижения tier после периода неактивности;
+- будущего истечения баллов;
+- истечения наград/overrides;
 - уведомлений;
 - периодических кампаний;
 - обслуживающих задач.
