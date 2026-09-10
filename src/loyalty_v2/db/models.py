@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -179,5 +180,5 @@ class PointsLedgerEntry(UUIDPrimaryKeyMixin, Base):
     reason: Mapped[str | None] = mapped_column(String(500))
     idempotency_key: Mapped[str | None] = mapped_column(String(128), index=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
+        DateTime(timezone=True), nullable=False, index=True, server_default=func.now()
     )
