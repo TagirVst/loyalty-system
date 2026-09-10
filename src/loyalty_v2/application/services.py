@@ -7,14 +7,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loyalty_v2.db.models import (
-    Customer,
-    CustomerLoyaltyState,
-    LedgerEntryType,
-    LoyaltyTier,
-    PointsAccount,
-    PointsLedgerEntry,
-)
+from loyalty_v2.db.identity_models import CustomerAuthIdentity
+from loyalty_v2.db.models import Customer, CustomerLoyaltyState, LedgerEntryType, LoyaltyTier, PointsAccount, PointsLedgerEntry
 
 
 class DomainError(Exception):
@@ -49,10 +43,8 @@ class RegisteredCustomer:
 
 
 class TierService:
-    async def tier_for_spend(
-        self, session: AsyncSession, organization_id: UUID, spend_minor: int
-    ) -> LoyaltyTier:
-        stmt = (
+    async def tier_for_spend(self, session: AsyncSession, organization_id: UUID, spend_minor: int) -> LoyaltyTier:
+        tier = await session.scalar(
             select(LoyaltyTier)
             .where(
                 LoyaltyTier.organization_id == organization_id,
@@ -62,7 +54,6 @@ class TierService:
             .order_by(LoyaltyTier.minimum_spend_minor.desc(), LoyaltyTier.sort_order.desc())
             .limit(1)
         )
-        tier = await session.scalar(stmt)
         if tier is None:
             raise NoActiveTier("Organization has no active tier for this spend")
         return tier
@@ -77,24 +68,36 @@ class CustomerService:
         session: AsyncSession,
         *,
         organization_id: UUID,
-        telegram_id: int,
+        provider: str,
+        external_subject: str,
         first_name: str,
         phone: str,
         birth_date: date,
     ) -> RegisteredCustomer:
-        existing = await session.scalar(
-            select(Customer.id).where(
-                Customer.organization_id == organization_id,
-                (Customer.telegram_id == telegram_id) | (Customer.phone == phone),
+        provider = provider.strip().lower()
+        external_subject = external_subject.strip()
+        if not provider or not external_subject:
+            raise CustomerAlreadyExists("Authentication identity is required")
+
+        identity_exists = await session.scalar(
+            select(CustomerAuthIdentity.id).where(
+                CustomerAuthIdentity.organization_id == organization_id,
+                CustomerAuthIdentity.provider == provider,
+                CustomerAuthIdentity.external_subject == external_subject,
+                CustomerAuthIdentity.is_active.is_(True),
             )
         )
-        if existing is not None:
-            raise CustomerAlreadyExists("Telegram identity or phone is already registered")
+        phone_exists = await session.scalar(
+            select(Customer.id).where(Customer.organization_id == organization_id, Customer.phone == phone)
+        )
+        if identity_exists is not None or phone_exists is not None:
+            raise CustomerAlreadyExists("Authentication identity or phone is already registered")
 
         base_tier = await self.tiers.tier_for_spend(session, organization_id, 0)
+        legacy_telegram_id = int(external_subject) if provider == "telegram" and external_subject.isdigit() else None
         customer = Customer(
             organization_id=organization_id,
-            telegram_id=telegram_id,
+            telegram_id=legacy_telegram_id,
             first_name=first_name.strip(),
             phone=phone,
             birth_date=birth_date,
@@ -102,35 +105,52 @@ class CustomerService:
         session.add(customer)
         await session.flush()
 
-        account = PointsAccount(
+        identity = CustomerAuthIdentity(
             organization_id=organization_id,
             customer_id=customer.id,
-            balance=0,
+            provider=provider,
+            external_subject=external_subject,
+            is_verified=True,
+            is_active=True,
+            verified_at=datetime.now(timezone.utc),
         )
+        account = PointsAccount(organization_id=organization_id, customer_id=customer.id, balance=0)
         loyalty_state = CustomerLoyaltyState(
             organization_id=organization_id,
             customer_id=customer.id,
             automatic_tier_id=base_tier.id,
             qualification_spend_minor=0,
         )
-        session.add_all([account, loyalty_state])
+        session.add_all([identity, account, loyalty_state])
         await session.flush()
         return RegisteredCustomer(customer, account, loyalty_state)
 
+    async def by_identity(self, session: AsyncSession, *, organization_id: UUID, provider: str, external_subject: str) -> Customer:
+        identity = await session.scalar(
+            select(CustomerAuthIdentity).where(
+                CustomerAuthIdentity.organization_id == organization_id,
+                CustomerAuthIdentity.provider == provider.strip().lower(),
+                CustomerAuthIdentity.external_subject == external_subject.strip(),
+                CustomerAuthIdentity.is_active.is_(True),
+            )
+        )
+        if identity is None:
+            raise CustomerNotFound("Customer identity not found")
+        customer = await session.scalar(
+            select(Customer).where(Customer.id == identity.customer_id, Customer.organization_id == organization_id)
+        )
+        if customer is None:
+            raise CustomerNotFound("Customer not found")
+        return customer
+
 
 class PointsService:
-    async def _locked_account(
-        self, session: AsyncSession, organization_id: UUID, customer_id: UUID
-    ) -> PointsAccount:
-        stmt = (
+    async def _locked_account(self, session: AsyncSession, organization_id: UUID, customer_id: UUID) -> PointsAccount:
+        account = await session.scalar(
             select(PointsAccount)
-            .where(
-                PointsAccount.organization_id == organization_id,
-                PointsAccount.customer_id == customer_id,
-            )
+            .where(PointsAccount.organization_id == organization_id, PointsAccount.customer_id == customer_id)
             .with_for_update()
         )
-        account = await session.scalar(stmt)
         if account is None:
             raise CustomerNotFound("Points account not found")
         return account
@@ -150,7 +170,6 @@ class PointsService:
     ) -> PointsLedgerEntry:
         if delta == 0:
             raise InvalidPointsAmount("Points delta cannot be zero")
-
         if idempotency_key:
             existing = await session.scalar(
                 select(PointsLedgerEntry).where(
@@ -160,12 +179,10 @@ class PointsService:
             )
             if existing is not None:
                 return existing
-
         account = await self._locked_account(session, organization_id, customer_id)
         new_balance = account.balance + delta
         if new_balance < 0:
             raise InsufficientPoints("Points balance cannot become negative")
-
         account.balance = new_balance
         account.version += 1
         entry = PointsLedgerEntry(
