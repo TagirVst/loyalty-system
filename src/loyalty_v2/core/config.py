@@ -1,15 +1,11 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_prefix="LOYALTY_",
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="LOYALTY_", extra="ignore")
 
     app_name: str = "Loyalty System V2"
     environment: str = "development"
@@ -18,6 +14,14 @@ class Settings(BaseSettings):
     pin_fingerprint_secret: str = Field(default="change-me-in-production", min_length=16)
     pin_failures_before_lock: int = 5
     pin_base_lock_seconds: int = 300
+    client_bot_token: str | None = None
+    organization_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self):
+        if self.environment.lower() in {"production", "prod"} and self.pin_fingerprint_secret == "change-me-in-production":
+            raise ValueError("LOYALTY_PIN_FINGERPRINT_SECRET must be changed in production")
+        return self
 
 
 @lru_cache
