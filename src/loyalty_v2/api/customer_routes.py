@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.client_service import ClientService
 from loyalty_v2.application.feedback_service import FeedbackService
+from loyalty_v2.application.notification_service import NotificationService
 from loyalty_v2.application.principal import CustomerSessionInvalid, PrincipalService
 from loyalty_v2.db.models import Customer
 from loyalty_v2.db.order_models import Order
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/api/v2/customer", tags=["customer"])
 principals = PrincipalService()
 clients = ClientService()
 feedback = FeedbackService()
+notifications = NotificationService()
 
 
 class FeedbackRequest(BaseModel):
@@ -26,6 +28,11 @@ class FeedbackRequest(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: str | None = Field(default=None, max_length=5000)
     order_id: UUID | None = None
+
+
+class NotificationPreferencesRequest(BaseModel):
+    customer_session_id: UUID
+    marketing_enabled: bool
 
 
 async def _principal(session: AsyncSession, session_id: UUID):
@@ -55,6 +62,21 @@ async def rewards(customer_session_id: UUID, session: AsyncSession = Depends(get
     p = await _principal(session, customer_session_id)
     rows = (await session.execute(select(CustomerReward, RewardDefinition).join(RewardDefinition, RewardDefinition.id == CustomerReward.reward_definition_id).where(CustomerReward.organization_id == p.organization_id, CustomerReward.customer_id == p.customer_id).order_by(CustomerReward.issued_at.desc()))).all()
     return [{"id": r.id, "name": d.name, "reward_type": d.reward_type, "status": r.status, "quantity_remaining": r.quantity_remaining, "valid_from": r.valid_from, "valid_until": r.valid_until} for r,d in rows]
+
+
+@router.get("/notification-preferences")
+async def notification_preferences(customer_session_id: UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    p = await _principal(session, customer_session_id)
+    item = await notifications.preferences(session, organization_id=p.organization_id, customer_id=p.customer_id)
+    return {"service_enabled": item.service_enabled, "marketing_enabled": item.marketing_enabled}
+
+
+@router.put("/notification-preferences")
+async def set_notification_preferences(body: NotificationPreferencesRequest, session: AsyncSession = Depends(get_session)) -> dict:
+    async with session.begin():
+        p = await _principal(session, body.customer_session_id)
+        item = await notifications.set_preferences(session, organization_id=p.organization_id, customer_id=p.customer_id, marketing_enabled=body.marketing_enabled)
+    return {"service_enabled": item.service_enabled, "marketing_enabled": item.marketing_enabled}
 
 
 @router.post("/feedback", status_code=201)
