@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loyalty_v2.application.integration_service import IntegrationConfigError
 from loyalty_v2.application.order_service import IdentificationService, OrderService
 from loyalty_v2.db.integration_models import ExternalOrderMapping, IntegrationClient, IntegrationWebhookInbox
+from loyalty_v2.db.models import Location
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,13 @@ class IntegrationOrderService:
         if not adapter.supports(inbox.event_type):
             raise IntegrationConfigError("Webhook event type is not supported by provider adapter")
         normalized = adapter.normalize(inbox.payload)
+        location = await session.scalar(select(Location.id).where(
+            Location.id == normalized.location_id,
+            Location.organization_id == client.organization_id,
+            Location.is_active.is_(True),
+        ))
+        if location is None:
+            raise IntegrationConfigError("External order location is outside integration organization or inactive")
         existing = await session.scalar(select(ExternalOrderMapping).where(
             ExternalOrderMapping.organization_id == client.organization_id,
             ExternalOrderMapping.provider == client.provider,
