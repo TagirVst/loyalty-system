@@ -1,9 +1,10 @@
 from pathlib import Path
 
 
-def test_obsolete_insecure_route_modules_are_removed() -> None:
+def test_obsolete_insecure_or_duplicate_route_modules_are_removed() -> None:
     assert not Path("src/loyalty_v2/api/routes.py").exists()
     assert not Path("src/loyalty_v2/api/customer_policy_routes.py").exists()
+    assert not Path("src/loyalty_v2/api/secure_policy_routes.py").exists()
 
 
 def test_customer_profile_changes_use_customer_principal() -> None:
