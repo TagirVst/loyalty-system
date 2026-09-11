@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loyalty_v2.application.auth_service import Permission
+from loyalty_v2.application.principal import PrincipalService
+from loyalty_v2.application.services import DomainError
 from loyalty_v2.db.notification_models import NotificationOutbox
 from loyalty_v2.db.session import get_session
 
 LATEST_SCHEMA_REVISION = "0027_notification_delivery_lease"
 router = APIRouter(tags=["system"])
+principals = PrincipalService()
 
 
 @router.get("/health")
@@ -26,32 +31,20 @@ async def ready(session: AsyncSession = Depends(get_session)) -> dict:
     except Exception as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail={"status": "not_ready", "database": "unavailable"}) from exc
     if revision != LATEST_SCHEMA_REVISION:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"status": "not_ready", "database": "ok", "schema_revision": revision, "expected_revision": LATEST_SCHEMA_REVISION},
-        )
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail={"status": "not_ready", "database": "ok", "schema_revision": revision, "expected_revision": LATEST_SCHEMA_REVISION})
     return {"status": "ready", "database": "ok", "schema_revision": revision}
 
 
 @router.get("/ops/status")
-async def operational_status(session: AsyncSession = Depends(get_session)) -> dict:
+async def operational_status(staff_session_id: UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    try:
+        principal = await principals.staff(session, staff_session_id=staff_session_id)
+        principal.require(Permission.ADMIN_ACCESS)
+    except DomainError as exc:
+        code = status.HTTP_403_FORBIDDEN if exc.code == "PERMISSION_DENIED" else status.HTTP_401_UNAUTHORIZED
+        raise HTTPException(code, detail={"code": exc.code, "message": str(exc)}) from exc
     now = datetime.now(timezone.utc)
-    counts = dict((await session.execute(
-        select(NotificationOutbox.status, func.count(NotificationOutbox.id)).group_by(NotificationOutbox.status)
-    )).all())
-    overdue = await session.scalar(select(func.count(NotificationOutbox.id)).where(
-        NotificationOutbox.status.in_(["queued", "retry"]),
-        NotificationOutbox.next_attempt_at < now,
-    ))
-    expired_leases = await session.scalar(select(func.count(NotificationOutbox.id)).where(
-        NotificationOutbox.status == "processing",
-        NotificationOutbox.lease_until < now,
-    ))
-    return {
-        "status": "ok",
-        "notifications": {
-            "by_status": {str(key): int(value) for key, value in counts.items()},
-            "overdue": int(overdue or 0),
-            "expired_leases": int(expired_leases or 0),
-        },
-    }
+    counts = dict((await session.execute(select(NotificationOutbox.status, func.count(NotificationOutbox.id)).where(NotificationOutbox.organization_id == principal.organization_id).group_by(NotificationOutbox.status))).all())
+    overdue = await session.scalar(select(func.count(NotificationOutbox.id)).where(NotificationOutbox.organization_id == principal.organization_id, NotificationOutbox.status.in_(["queued", "retry"]), NotificationOutbox.next_attempt_at < now))
+    expired_leases = await session.scalar(select(func.count(NotificationOutbox.id)).where(NotificationOutbox.organization_id == principal.organization_id, NotificationOutbox.status == "processing", NotificationOutbox.lease_until < now))
+    return {"status": "ok", "notifications": {"by_status": {str(key): int(value) for key, value in counts.items()}, "overdue": int(overdue or 0), "expired_leases": int(expired_leases or 0)}}
