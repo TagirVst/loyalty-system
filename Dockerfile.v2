@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+RUN apt-get update && apt-get install -y --no-install-recommends curl postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt pyproject.toml ./
@@ -18,7 +18,8 @@ COPY migrations_v2 ./migrations_v2
 COPY alembic_v2.ini ./
 COPY scripts_v2 ./scripts_v2
 
-RUN useradd --create-home --uid 10001 loyalty \
+RUN chmod +x /app/scripts_v2/*.sh \
+    && useradd --create-home --uid 10001 loyalty \
     && chown -R loyalty:loyalty /app
 USER loyalty
 
