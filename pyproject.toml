@@ -17,3 +17,6 @@ where = ["src"]
 pythonpath = ["src"]
 testpaths = ["tests_v2"]
 asyncio_mode = "auto"
+markers = [
+  "integration: tests requiring a real PostgreSQL database",
+]
