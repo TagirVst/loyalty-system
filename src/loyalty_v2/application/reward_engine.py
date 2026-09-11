@@ -65,7 +65,8 @@ class RewardCampaignEngine:
         return LoyaltyEffects(tuple(reward_effects),tuple(campaign_effects),min(total_discount,gross_amount_minor),cashback_multiplier)
 
     @staticmethod
-    def _reward_discount_snapshot(snapshot: dict, gross_amount_minor:int, categories:dict[str,int]) -> int:
+    def _reward_discount_snapshot(snapshot: dict, gross_amount_minor:int, categories:dict[str,int] | None = None) -> int:
+        categories = categories if categories is not None else {}
         config=snapshot.get("config") or {}; t=str(snapshot.get("reward_type") or "")
         if t=="fixed_discount": return min(max(int(config.get("amount_minor",0) or 0),0),gross_amount_minor)
         if t=="percent_discount": return gross_amount_minor*max(min(int(config.get("percent",0) or 0),100),0)//100
@@ -79,11 +80,12 @@ class RewardCampaignEngine:
         return 0
 
     @staticmethod
-    def _reward_discount(definition: RewardDefinition, gross_amount_minor:int, categories:dict[str,int]) -> int:
+    def _reward_discount(definition: RewardDefinition, gross_amount_minor:int, categories:dict[str,int] | None = None) -> int:
         return RewardCampaignEngine._reward_discount_snapshot({"reward_type":definition.reward_type,"config":definition.config},gross_amount_minor,categories)
 
     @staticmethod
-    def _campaign_matches(campaign: Campaign, gross_amount_minor:int, categories:dict[str,int], customer_segment_codes:set[str]|None=None) -> bool:
+    def _campaign_matches(campaign: Campaign, gross_amount_minor:int, categories:dict[str,int] | None = None, customer_segment_codes:set[str]|None=None) -> bool:
+        categories = categories or {}
         c=campaign.conditions or {}; minimum=int(c.get("minimum_spend_minor",0) or 0); maximum=c.get("maximum_spend_minor")
         if gross_amount_minor<minimum or (maximum is not None and gross_amount_minor>int(maximum)): return False
         code=c.get("category_code")
