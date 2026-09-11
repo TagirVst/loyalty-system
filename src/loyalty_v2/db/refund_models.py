@@ -21,6 +21,7 @@ class Refund(UUIDPrimaryKeyMixin, Base):
     paid_refund_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     restored_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
     reversed_earned_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    points_debt_created: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     qualification_reversal_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     calculation_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
