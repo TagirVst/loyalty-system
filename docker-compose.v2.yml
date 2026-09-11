@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-loyalty}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-loyalty_v2}
+    volumes:
+      - loyalty_v2_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-loyalty} -d ${POSTGRES_DB:-loyalty_v2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    command: alembic -c alembic_v2.ini upgrade head
+    env_file: .env.v2
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    command: uvicorn loyalty_v2.api.app:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    env_file: .env.v2
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  client_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    command: python -m loyalty_v2.bots.run_client
+    restart: unless-stopped
+    env_file: .env.v2
+    depends_on:
+      api:
+        condition: service_healthy
+
+  staff_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    command: python -m loyalty_v2.bots.run_staff
+    restart: unless-stopped
+    env_file: .env.v2
+    depends_on:
+      api:
+        condition: service_healthy
+
+  notification_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    command: python -m loyalty_v2.application.notification_worker
+    restart: unless-stopped
+    env_file: .env.v2
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  loyalty_v2_postgres:
