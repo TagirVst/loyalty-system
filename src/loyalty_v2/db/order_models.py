@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped,mapped_column
 from loyalty_v2.db.base import Base,TimestampMixin,UUIDPrimaryKeyMixin
 
 class IdentificationSession(UUIDPrimaryKeyMixin,Base):
-    __tablename__="identification_sessions"; __table_args__=(Index("uq_identification_active_code_scope","organization_id","code",unique=True,postgresql_where=text("status = 'active'")),)
+    __tablename__="identification_sessions"; __table_args__=(Index("uq_identification_active_code_scope","organization_id","code",unique=True,postgresql_where=text("status = 'active'")),Index("uq_identification_active_customer_scope","organization_id","customer_id",unique=True,postgresql_where=text("status = 'active'")))
     organization_id:Mapped[UUID]=mapped_column(ForeignKey("organizations.id",ondelete="RESTRICT"),nullable=False,index=True); customer_id:Mapped[UUID]=mapped_column(ForeignKey("customers.id",ondelete="CASCADE"),nullable=False,index=True); code:Mapped[str]=mapped_column(String(5),nullable=False,index=True); status:Mapped[str]=mapped_column(String(16),nullable=False,default="active",index=True); expires_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False,index=True); consumed_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True)); created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
 
 class OrderDraft(UUIDPrimaryKeyMixin,TimestampMixin,Base):
