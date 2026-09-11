@@ -125,7 +125,9 @@
 - external order mapping;
 - generic `order.confirm` adapter;
 - external order проходит через обычный loyalty order pipeline;
-- location tenant validation.
+- location tenant validation;
+- добавлена отдельная спецификация `docs/16-IIKO-INTEGRATION.md` для актуального iikoWeb/решения «Кафе» и iikoCloud/iikoFront integration path;
+- в iiko-спецификации зафиксированы новая схема API authorization 2026, mapping organizations/terminal groups/catalog/orders, source-of-truth rules, security, reconciliation и phased implementation plan.
 
 ### Migration / cutover
 - V1 customer import model;
@@ -161,7 +163,26 @@
 - исправлен Compose env interpolation для `.env.v2`;
 - V2 dependencies отделены от legacy V1 requirements;
 - backup/restore автоматически используют `POSTGRES_PASSWORD` как `PGPASSWORD` и проверяют имя БД;
+- введённый PIN сотрудника удаляется из Telegram-чата best-effort сразу после считывания;
 - версия API/package синхронизирована как `0.1.0rc1`.
+
+## iiko integration documentation
+
+В prerelease включён файл `docs/16-IIKO-INTEGRATION.md`, подготовленный после проверки актуальных на 2026-09-11 материалов iiko.
+
+В нём зафиксировано:
+
+- публичный вариант iiko для формата «Кафе» и роль iikoWeb;
+- почему Cloud API нельзя автоматически считать включённым в тариф без проверки entitlement конкретного аккаунта;
+- переход iiko в 2026 году на новую developer-app authorization scheme и отказ от legacy auth;
+- разграничение iikoCloud API, iikoFront API/plugin и iikoConnector;
+- mapping iiko organization/terminal group/order/product/customer → наши Organization/Location/ExternalOrderMapping/SaleCategory/Customer mappings;
+- модель, где iiko является source of truth для POS-факта продажи, а Loyalty System V2 — source of truth для points/tiers/rewards/campaigns/refunds/audit;
+- Cloud-only integration path для organizations, terminal groups, menu/catalog, stop lists и внешних заказов;
+- отдельный native iikoFront checkout path для применения нашей лояльности к обычным кассовым продажам;
+- правила idempotency, refund, reconciliation, retries, secrets и logging;
+- поэтапный план `IIKO-0` → `IIKO-5`;
+- список вопросов, которые нужно подтвердить у iiko/партнёра перед production connector implementation.
 
 ## Verification
 
@@ -172,11 +193,12 @@
 3. полный `alembic upgrade head`;
 4. `pytest -q tests_v2` включая PostgreSQL integration schema checks.
 
-Финальный статус конкретного release snapshot должен быть проверен в GitHub Actions перед production deployment.
+Последний кодовый snapshot перед добавлением iiko-документации: **123 passed, 2 deprecation warnings, 0 failures**. Документационные изменения не меняют runtime/schema, но release branch всё равно прогоняется CI после обновления snapshot.
 
 ## Что сознательно НЕ считается завершённым в v0.1 RC
 
-- provider-specific iiko adapter: нужен точный доступный iiko API/event contract;
+- provider-specific iiko adapter: архитектура и точный план уже описаны в `docs/16-IIKO-INTEGRATION.md`, но production implementation требует credentials, фактических scopes и подтверждения commercial/API entitlement конкретного iikoWeb аккаунта;
+- native iikoFront loyalty connector/plugin: нужно подтвердить рекомендуемый iiko механизм для внешней loyalty в обычном POS checkout;
 - production cutover на реальных данных: нужен V1 dry-run и reconciliation фактической базы;
 - backup→destroy→restore rehearsal на отдельной production-like БД;
 - полноценные concurrency/load tests под реальной параллельной нагрузкой;
