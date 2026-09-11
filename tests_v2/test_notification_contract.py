@@ -1,8 +1,8 @@
 from pathlib import Path
 
 
-def test_notification_outbox_supports_retry_and_idempotency():
-    text=Path("src/loyalty_v2/db/notification_models.py").read_text(); assert "class NotificationOutbox" in text; assert "idempotency_key" in text; assert "next_attempt_at" in text; assert "max_attempts" in text; assert "recipient_type" in text; assert "staff_chat" in text
+def test_notification_outbox_supports_retry_idempotency_and_leases():
+    text=Path("src/loyalty_v2/db/notification_models.py").read_text(); assert "class NotificationOutbox" in text; assert "idempotency_key" in text; assert "next_attempt_at" in text; assert "max_attempts" in text; assert "recipient_type" in text; assert "staff_chat" in text; assert "lease_until" in text
 
 
 def test_notification_preferences_separate_marketing():
@@ -33,8 +33,8 @@ def test_notification_templates_are_data_driven():
     model=Path("src/loyalty_v2/db/notification_template_models.py").read_text(); service=Path("src/loyalty_v2/application/notification_service.py").read_text(); assert "class NotificationTemplate" in model; assert "body_template" in model; assert "Formatter().parse" in service
 
 
-def test_notification_worker_processes_outbox():
-    text=Path("src/loyalty_v2/application/notification_worker.py").read_text(); assert "deliver_due" in text; assert "TelegramNotificationProvider" in text; assert "while True" in text
+def test_notification_worker_claims_then_sends_outside_transaction():
+    worker=Path("src/loyalty_v2/application/notification_worker.py").read_text(); service=Path("src/loyalty_v2/application/notification_service.py").read_text(); assert "claim_due" in worker; assert "complete_delivery" in worker; assert "provider.send" in worker; assert "claim_due" in service; assert "lease_until" in service; assert "await provider.send" not in service
 
 
 def test_order_tier_change_enqueues_notification_and_consumption_timestamp():
