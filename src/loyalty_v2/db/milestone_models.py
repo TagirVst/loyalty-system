@@ -36,6 +36,7 @@ class MilestoneRewardRule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     threshold_count: Mapped[int] = mapped_column(Integer, nullable=False)
     reward_definition_id: Mapped[UUID] = mapped_column(ForeignKey("reward_definitions.id", ondelete="RESTRICT"), nullable=False)
     repeatable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    config_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
@@ -48,6 +49,9 @@ class MilestoneIssuance(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
     customer_id: Mapped[UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     rule_id: Mapped[UUID] = mapped_column(ForeignKey("milestone_reward_rules.id", ondelete="RESTRICT"), nullable=False, index=True)
+    rule_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    threshold_count_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
+    repeatable_snapshot: Mapped[bool] = mapped_column(Boolean, nullable=False)
     milestone_number: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_reward_id: Mapped[UUID] = mapped_column(ForeignKey("customer_rewards.id", ondelete="RESTRICT"), nullable=False)
     source_order_id: Mapped[UUID | None] = mapped_column(ForeignKey("orders_v2.id", ondelete="RESTRICT"), nullable=True)
