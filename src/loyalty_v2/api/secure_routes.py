@@ -110,7 +110,7 @@ async def refund(order_id:UUID,body:ConfirmRefundRequest,session:AsyncSession=De
             principal=await principals.staff(session,staff_session_id=body.staff_session_id); principal.require(Permission.ADMIN_ACCESS)
             item=await refunds.confirm(session,organization_id=principal.organization_id,order_id=order_id,actor_staff_id=principal.staff_id,reason=body.reason,idempotency_key=body.idempotency_key,gross_refund_minor=body.gross_refund_minor,category_counts=body.category_counts)
     except DomainError as exc: raise domain_error(exc) from exc
-    return RefundResponse(refund_id=item.id,order_id=item.order_id,refund_type=item.refund_type,gross_refund_minor=item.gross_refund_minor,paid_refund_minor=item.paid_refund_minor,restored_points=item.restored_points,reversed_earned_points=item.reversed_earned_points)
+    return RefundResponse(refund_id=item.id,order_id=item.order_id,refund_type=item.refund_type,gross_refund_minor=item.gross_refund_minor,paid_refund_minor=item.paid_refund_minor,restored_points=item.restored_points,reversed_earned_points=item.reversed_earned_points,points_debt_created=item.points_debt_created)
 
 @router.post("/orders/{order_id}/cancel-own",response_model=RefundResponse)
 async def cancel_own(order_id:UUID,body:CancelOwnOrderRequest,session:AsyncSession=Depends(get_session))->RefundResponse:
@@ -121,4 +121,4 @@ async def cancel_own(order_id:UUID,body:CancelOwnOrderRequest,session:AsyncSessi
             if order is None or order.organization_id!=principal.organization_id or order.location_id!=principal.location_id or order.actor_staff_id!=principal.staff_id: raise HTTPException(status_code=403,detail={"code":"NOT_OWN_ORDER"})
             item=await refunds.confirm(session,organization_id=principal.organization_id,order_id=order_id,actor_staff_id=principal.staff_id,reason=body.reason,idempotency_key=body.idempotency_key,cashier_cancel=True)
     except DomainError as exc: raise domain_error(exc) from exc
-    return RefundResponse(refund_id=item.id,order_id=item.order_id,refund_type=item.refund_type,gross_refund_minor=item.gross_refund_minor,paid_refund_minor=item.paid_refund_minor,restored_points=item.restored_points,reversed_earned_points=item.reversed_earned_points)
+    return RefundResponse(refund_id=item.id,order_id=item.order_id,refund_type=item.refund_type,gross_refund_minor=item.gross_refund_minor,paid_refund_minor=item.paid_refund_minor,restored_points=item.restored_points,reversed_earned_points=item.reversed_earned_points,points_debt_created=item.points_debt_created)
