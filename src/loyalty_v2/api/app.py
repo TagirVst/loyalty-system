@@ -9,16 +9,14 @@ from loyalty_v2.api.admin_staff_routes import router as admin_staff_router
 from loyalty_v2.api.customer_routes import router as customer_router
 from loyalty_v2.api.engagement_routes import router as engagement_router
 from loyalty_v2.api.integration_routes import router as integration_router
-from loyalty_v2.api.secure_policy_routes import router as secure_policy_router
 from loyalty_v2.api.secure_routes import router as secure_router
 from loyalty_v2.api.system_routes import router as system_router
 from loyalty_v2.core.config import get_settings
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="2.0.0-dev")
+app = FastAPI(title=settings.app_name, version="0.1.0-pre.1")
 app.include_router(system_router)
 app.include_router(secure_router)
-app.include_router(secure_policy_router)
 app.include_router(admin_config_router)
 app.include_router(admin_staff_router)
 app.include_router(admin_customer_router)
