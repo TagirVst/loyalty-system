@@ -1,0 +1,29 @@
+services:
+  test_db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: loyalty_test
+      POSTGRES_PASSWORD: loyalty_test_password
+      POSTGRES_DB: loyalty_v2_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loyalty_test -d loyalty_v2_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    depends_on:
+      test_db:
+        condition: service_healthy
+    environment:
+      LOYALTY_ENVIRONMENT: test
+      LOYALTY_TEST_DATABASE_URL: postgresql+asyncpg://loyalty_test:loyalty_test_password@test_db:5432/loyalty_v2_test
+      LOYALTY_PIN_FINGERPRINT_SECRET: test-pin-secret-at-least-32-characters
+      LOYALTY_IDENTIFICATION_CODE_SECRET: test-identification-secret-32-characters
+      LOYALTY_INTEGRATION_API_KEY_SECRET: test-integration-secret-32-characters
+    command: bash scripts_v2/run_postgres_tests.sh
