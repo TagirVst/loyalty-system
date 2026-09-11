@@ -84,9 +84,15 @@ class StaffBot:
 
         @self.router.message(StaffFlow.pin)
         async def pin(message: Message, state: FSMContext) -> None:
+            raw_pin=(message.text or "").strip()
+            try:
+                await message.delete()
+            except Exception:
+                pass
             data=await state.get_data(); terminal_id=UUID(data["terminal_id"])
             async with self.sessions() as session:
-                async with session.begin(): attempt=await self.auth.authenticate_attempt(session,organization_id=self.organization_id,terminal_id=terminal_id,pin=(message.text or "").strip())
+                async with session.begin(): attempt=await self.auth.authenticate_attempt(session,organization_id=self.organization_id,terminal_id=terminal_id,pin=raw_pin)
+            raw_pin=""
             if attempt.error: await message.answer("Неверный PIN или вход временно заблокирован."); return
             auth_session=attempt.auth_session; assert auth_session is not None
             await state.set_state(None); await state.update_data(staff_session_id=str(auth_session.id)); await message.answer("Вход выполнен.",reply_markup=self.main_keyboard())
