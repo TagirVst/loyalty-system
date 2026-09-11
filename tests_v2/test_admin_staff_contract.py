@@ -1,9 +1,6 @@
-from loyalty_v2.api.admin_staff_routes import (
-    ChangePinRequest,
-    CreateStaffRequest,
-    CreateTerminalRequest,
-    UpdateStaffRequest,
-)
+from pathlib import Path
+
+from loyalty_v2.api.admin_staff_routes import ChangePinRequest, CreateStaffRequest, CreateTerminalRequest, UpdateStaffRequest
 from loyalty_v2.db.auth_models import StaffSession
 
 
@@ -28,3 +25,12 @@ def test_active_terminal_session_has_unique_partial_index() -> None:
 def test_staff_response_contract_never_exposes_pin_material() -> None:
     forbidden = {"pin", "pin_hash", "pin_fingerprint"}
     assert forbidden.isdisjoint({"id", "location_id", "name", "role", "is_active", "pin_configured"})
+
+
+def test_security_context_changes_end_sessions_with_timestamp() -> None:
+    text = Path("src/loyalty_v2/application/admin_staff_service.py").read_text()
+    assert "security_context_changed" in text
+    assert 'auth_session.status = "ended"' in text
+    assert "auth_session.ended_at = now" in text
+    assert "telegram_chat_id != item.telegram_chat_id" in text
+    assert "new_role != item.role" in text
