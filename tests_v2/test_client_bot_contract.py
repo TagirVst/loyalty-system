@@ -24,6 +24,8 @@ def test_bot_uses_customer_session_and_portal_facade() -> None:
     assert "portal.submit_feedback" in text
     assert "portal.notification_preferences" in text
     assert "portal.set_marketing_notifications" in text
+    assert "portal.change_phone" in text
+    assert "portal.change_birth_date" in text
     assert "customers.by_identity" not in text
     assert "IdentificationService" not in text
 
@@ -33,3 +35,10 @@ def test_feedback_is_fsm_driven_and_rating_is_bounded() -> None:
     assert "class FeedbackFlow" in text
     assert "rating not in range(1,6)" in text
     assert "Пропустить" in text
+
+
+def test_profile_edit_requires_own_telegram_contact_and_one_time_birth_policy() -> None:
+    text = Path("src/loyalty_v2/bots/client_bot.py").read_text()
+    assert "class ProfileEdit" in text
+    assert "message.contact.user_id != message.from_user.id" in text
+    assert "Самостоятельно изменить её можно только один раз" in text
