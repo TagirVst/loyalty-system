@@ -1,4 +1,5 @@
 from functools import lru_cache
+from uuid import UUID
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,14 +22,26 @@ class Settings(BaseSettings):
     organization_id: str | None = None
 
     @model_validator(mode="after")
-    def validate_production_secrets(self):
+    def validate_runtime_configuration(self):
+        if not self.database_url.startswith("postgresql+asyncpg://"):
+            raise ValueError("LOYALTY_DATABASE_URL must use postgresql+asyncpg")
+        if self.organization_id is not None:
+            try:
+                UUID(self.organization_id)
+            except ValueError as exc:
+                raise ValueError("LOYALTY_ORGANIZATION_ID must be a valid UUID") from exc
         if self.environment.lower() in {"production", "prod"}:
-            if self.pin_fingerprint_secret == "change-me-in-production":
-                raise ValueError("LOYALTY_PIN_FINGERPRINT_SECRET must be changed in production")
-            if self.identification_code_secret == "change-identification-secret":
-                raise ValueError("LOYALTY_IDENTIFICATION_CODE_SECRET must be changed in production")
-            if self.integration_api_key_secret == "change-integration-secret":
-                raise ValueError("LOYALTY_INTEGRATION_API_KEY_SECRET must be changed in production")
+            secrets = {
+                "LOYALTY_PIN_FINGERPRINT_SECRET": self.pin_fingerprint_secret,
+                "LOYALTY_IDENTIFICATION_CODE_SECRET": self.identification_code_secret,
+                "LOYALTY_INTEGRATION_API_KEY_SECRET": self.integration_api_key_secret,
+            }
+            defaults = {"change-me-in-production", "change-identification-secret", "change-integration-secret"}
+            for name, value in secrets.items():
+                if value in defaults or len(value) < 32:
+                    raise ValueError(f"{name} must be a unique secret with at least 32 characters in production")
+            if len(set(secrets.values())) != len(secrets):
+                raise ValueError("Production security secrets must be different from each other")
         return self
 
 
