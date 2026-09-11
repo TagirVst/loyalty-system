@@ -26,6 +26,7 @@ class NotificationOutbox(UUIDPrimaryKeyMixin, Base):
         CheckConstraint("(recipient_type = 'customer' AND customer_id IS NOT NULL AND recipient_address IS NULL) OR (recipient_type = 'staff_chat' AND customer_id IS NULL AND recipient_address IS NOT NULL)", name="notification_recipient_shape"),
         Index("uq_notification_outbox_org_idempotency", "organization_id", "idempotency_key", unique=True, postgresql_where=text("idempotency_key IS NOT NULL")),
         Index("ix_notification_outbox_due", "status", "next_attempt_at"),
+        Index("ix_notification_outbox_lease", "status", "lease_until"),
     )
 
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -41,6 +42,7 @@ class NotificationOutbox(UUIDPrimaryKeyMixin, Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(1000))
     idempotency_key: Mapped[str | None] = mapped_column(String(160))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
