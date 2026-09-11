@@ -32,3 +32,12 @@ def test_refund_supports_explicit_category_allocation() -> None:
     assert "Refund category quantity exceeds remaining order quantity" in service
     assert "category_counts:dict[str,int]|None=None" in schemas
     assert "category_counts=body.category_counts" in routes
+
+
+def test_full_refund_restores_only_eligible_order_rewards() -> None:
+    text = Path("src/loyalty_v2/application/refund_service.py").read_text()
+    assert "_restore_order_rewards" in text
+    assert 'reward.status in {"revoked","expired"}' in text
+    assert "reward.quantity_remaining += 1" in text
+    assert "if preview.remaining_gross_minor==0" in text
+    assert '"restored_reward_ids"' in text
