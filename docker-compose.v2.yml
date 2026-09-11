@@ -25,6 +25,17 @@ services:
         condition: service_healthy
     restart: "no"
 
+  preflight:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    command: python scripts_v2/preflight.py
+    env_file: .env.v2
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   api:
     build:
       context: .
@@ -33,7 +44,7 @@ services:
     restart: unless-stopped
     env_file: .env.v2
     depends_on:
-      migrate:
+      preflight:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
