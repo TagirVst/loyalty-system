@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loyalty_v2.application.idempotency import IdempotencyKeyReused, advisory_idempotency_lock
 from loyalty_v2.application.milestone_service import MilestoneService
 from loyalty_v2.application.services import DomainError, PointsService, TierService
 from loyalty_v2.db.models import CustomerLoyaltyState, LedgerEntryType
@@ -101,19 +102,20 @@ class RefundService:
         return RefundPreview(requested,proportional(order.paid_amount_minor,requested,order.gross_amount_minor,final=final,already=refunded_paid,already_gross=refunded_gross),proportional(order.redeemed_points,requested,order.gross_amount_minor,final=final,already=restored,already_gross=refunded_gross),proportional(order.points_earned,requested,order.gross_amount_minor,final=final,already=reversed_earned,already_gross=refunded_gross),proportional(order.qualification_amount_minor,requested,order.gross_amount_minor,final=final,already=reversed_qualification,already_gross=refunded_gross),remaining-requested,categories)
 
     async def confirm(self, session: AsyncSession, *, organization_id: UUID, order_id: UUID, actor_staff_id: UUID, reason: str, idempotency_key: str, gross_refund_minor: int | None = None, category_counts: dict[str,int] | None = None, cashier_cancel: bool = False) -> Refund:
+        await advisory_idempotency_lock(session,organization_id=organization_id,scope="refund_confirm",key=idempotency_key)
         existing=await session.scalar(select(Refund).where(Refund.organization_id==organization_id,Refund.idempotency_key==idempotency_key))
-        if existing: return existing
+        if existing:
+            if existing.order_id!=order_id: raise IdempotencyKeyReused("Idempotency key was already used for another refund")
+            return existing
         order=await session.scalar(select(Order).where(Order.id==order_id,Order.organization_id==organization_id).with_for_update())
         if order is None: raise RefundNotAllowed("Order not found")
-        existing=await session.scalar(select(Refund).where(Refund.organization_id==organization_id,Refund.idempotency_key==idempotency_key))
-        if existing: return existing
         now=datetime.now(timezone.utc)
         if cashier_cancel:
             if gross_refund_minor is not None and gross_refund_minor!=order.gross_amount_minor: raise RefundNotAllowed("Cashier cancellation must refund the whole remaining order")
             if category_counts is not None: raise RefundNotAllowed("Cashier cancellation does not accept manual category allocation")
             if now-order.confirmed_at>CASHIER_CANCEL_WINDOW: raise RefundNotAllowed("Cashier cancellation window has expired")
         preview=await self.preview(session,organization_id=organization_id,order_id=order_id,gross_refund_minor=gross_refund_minor,category_counts=category_counts)
-        state=await session.scalar(select(CustomerLoyaltyState).where(CustomerLoyaltyState.customer_id==order.customer_id).with_for_update())
+        state=await session.scalar(select(CustomerLoyaltyState).where(CustomerLoyaltyState.organization_id==organization_id,CustomerLoyaltyState.customer_id==order.customer_id).with_for_update())
         if state is None: raise RefundNotAllowed("Customer loyalty state missing")
         refund=Refund(organization_id=organization_id,order_id=order.id,actor_staff_id=actor_staff_id,refund_type="full" if preview.remaining_gross_minor==0 else "partial",gross_refund_minor=preview.gross_refund_minor,paid_refund_minor=preview.paid_refund_minor,restored_points=preview.restored_points,reversed_earned_points=preview.reversed_earned_points,points_debt_created=0,qualification_reversal_minor=preview.qualification_reversal_minor,calculation_snapshot={"algorithm":"explicit_categories" if category_counts is not None else "cumulative_proportional_floor_final_remainder","original_gross_minor":order.gross_amount_minor,"category_counts":preview.category_counts},reason=reason,idempotency_key=idempotency_key)
         session.add(refund); await session.flush()
