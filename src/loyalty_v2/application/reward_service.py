@@ -20,27 +20,23 @@ class RewardStatus(StrEnum):
     REVOKED = "revoked"
     EXPIRED = "expired"
 
-
-class RewardUnavailable(DomainError):
-    code = "REWARD_UNAVAILABLE"
-
-
-class RewardAlreadyIssued(DomainError):
-    code = "REWARD_ALREADY_ISSUED"
+class RewardUnavailable(DomainError): code = "REWARD_UNAVAILABLE"
+class RewardAlreadyIssued(DomainError): code = "REWARD_ALREADY_ISSUED"
 
 
 def birthday_in_year(birth_date: date, year: int) -> date:
-    try:
-        return birth_date.replace(year=year)
+    try: return birth_date.replace(year=year)
     except ValueError:
-        if birth_date.month == 2 and birth_date.day == 29:
-            return date(year, 2, 28)
+        if birth_date.month == 2 and birth_date.day == 29: return date(year, 2, 28)
         raise
 
 
 class RewardService:
-    def __init__(self) -> None:
-        self.notifications = NotificationService()
+    def __init__(self) -> None: self.notifications = NotificationService()
+
+    @staticmethod
+    def definition_snapshot(definition: RewardDefinition) -> dict:
+        return {"code": definition.code, "name": definition.name, "reward_type": definition.reward_type, "config": dict(definition.config or {}), "stackable": bool(definition.stackable), "default_validity_days": definition.default_validity_days}
 
     async def issue(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, reward_definition_id: UUID, source_type: str | None = None, source_id: UUID | None = None, source_key: str | None = None, valid_from: datetime | None = None, valid_until: datetime | None = None, now: datetime | None = None) -> CustomerReward:
         now = now or datetime.now(timezone.utc)
@@ -55,7 +51,7 @@ class RewardService:
         if valid_until is None and definition.default_validity_days is not None: valid_until = valid_from + timedelta(days=definition.default_validity_days)
         if valid_until is not None and valid_until <= valid_from: raise RewardUnavailable("Reward validity end must be after start")
         status = RewardStatus.ISSUED.value if valid_from > now else RewardStatus.ACTIVE.value
-        reward = CustomerReward(organization_id=organization_id, customer_id=customer_id, reward_definition_id=definition.id, quantity_remaining=1, status=status, valid_from=valid_from, valid_until=valid_until, source_type=source_type, source_id=source_id, source_key=source_key)
+        reward = CustomerReward(organization_id=organization_id, customer_id=customer_id, reward_definition_id=definition.id, reward_definition_version=definition.config_version, definition_snapshot=self.definition_snapshot(definition), quantity_remaining=1, status=status, valid_from=valid_from, valid_until=valid_until, source_type=source_type, source_id=source_id, source_key=source_key)
         session.add(reward); await session.flush()
         await self.notifications.enqueue(session, organization_id=organization_id, customer_id=customer_id, body=f"У вас новая награда: {definition.name}.", kind="service", template_code="reward_issued", idempotency_key=f"reward-issued:{reward.id}")
         return reward
@@ -63,8 +59,7 @@ class RewardService:
     async def refresh_status(self, session: AsyncSession, reward: CustomerReward, *, now: datetime | None = None) -> CustomerReward:
         now = now or datetime.now(timezone.utc)
         if reward.status in {RewardStatus.CONSUMED.value, RewardStatus.REVOKED.value, RewardStatus.EXPIRED.value}: return reward
-        if reward.valid_until is not None and reward.valid_until <= now:
-            reward.status = RewardStatus.EXPIRED.value; reward.quantity_remaining = 0; reward.expired_at = now
+        if reward.valid_until is not None and reward.valid_until <= now: reward.status = RewardStatus.EXPIRED.value; reward.quantity_remaining = 0; reward.expired_at = now
         elif reward.valid_from <= now: reward.status = RewardStatus.ACTIVE.value
         else: reward.status = RewardStatus.ISSUED.value
         return reward
@@ -91,7 +86,5 @@ class RewardService:
         existing = await session.scalar(select(CustomerReward.id).where(CustomerReward.organization_id == organization_id, CustomerReward.customer_id == customer_id, CustomerReward.source_key == source_key))
         if existing is not None: return None
         valid_from = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc); valid_until = datetime.combine(end_date, datetime.min.time(), tzinfo=timezone.utc)
-        try:
-            return await self.issue(session, organization_id=organization_id, customer_id=customer_id, reward_definition_id=reward_definition_id, source_type="birthday", source_key=source_key, valid_from=valid_from, valid_until=valid_until, now=now)
-        except RewardAlreadyIssued:
-            return None
+        try: return await self.issue(session, organization_id=organization_id, customer_id=customer_id, reward_definition_id=reward_definition_id, source_type="birthday", source_key=source_key, valid_from=valid_from, valid_until=valid_until, now=now)
+        except RewardAlreadyIssued: return None
