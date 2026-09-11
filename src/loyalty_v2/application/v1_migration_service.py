@@ -7,10 +7,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loyalty_v2.application.services import CustomerService, LedgerEntryType, PointsService
+from loyalty_v2.application.services import CustomerService, PointsService
 from loyalty_v2.db.identity_models import CustomerAuthIdentity
 from loyalty_v2.db.migration_models import LegacyCustomerMapping, MigrationRun
-from loyalty_v2.db.models import Customer
+from loyalty_v2.db.models import Customer, LedgerEntryType
 
 
 @dataclass(frozen=True, slots=True)
