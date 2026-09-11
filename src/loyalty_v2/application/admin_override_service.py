@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.audit_service import AuditService
+from loyalty_v2.application.services import CustomerNotFound
 from loyalty_v2.db.customer_policy_models import CustomerRedemptionOverride, CustomerTierOverride
 from loyalty_v2.db.models import Customer
 
@@ -27,7 +28,7 @@ class AdminOverrideService:
     ) -> dict[str, int]:
         customer = await session.scalar(select(Customer.id).where(Customer.id == customer_id, Customer.organization_id == organization_id))
         if customer is None:
-            raise ValueError("Customer not found")
+            raise CustomerNotFound("Customer not found")
         tier_count = redemption_count = 0
         if clear_tier:
             rows = (await session.scalars(select(CustomerTierOverride).where(
