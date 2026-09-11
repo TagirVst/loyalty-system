@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_url: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/loyalty_v2")
     sql_echo: bool = False
     pin_fingerprint_secret: str = Field(default="change-me-in-production", min_length=16)
+    identification_code_secret: str = Field(default="change-identification-secret", min_length=16)
     pin_failures_before_lock: int = 5
     pin_base_lock_seconds: int = 300
     client_bot_token: str | None = None
@@ -20,8 +21,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self):
-        if self.environment.lower() in {"production", "prod"} and self.pin_fingerprint_secret == "change-me-in-production":
-            raise ValueError("LOYALTY_PIN_FINGERPRINT_SECRET must be changed in production")
+        if self.environment.lower() in {"production", "prod"}:
+            if self.pin_fingerprint_secret == "change-me-in-production":
+                raise ValueError("LOYALTY_PIN_FINGERPRINT_SECRET must be changed in production")
+            if self.identification_code_secret == "change-identification-secret":
+                raise ValueError("LOYALTY_IDENTIFICATION_CODE_SECRET must be changed in production")
         return self
 
 
