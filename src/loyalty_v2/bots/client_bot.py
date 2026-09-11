@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from loyalty_v2.application.customer_auth_service import CustomerAuthService
 from loyalty_v2.application.customer_portal_service import CustomerPortalService
-from loyalty_v2.application.services import CustomerAlreadyExists, CustomerNotFound, CustomerService
+from loyalty_v2.application.services import CustomerAlreadyExists, CustomerNotFound, CustomerService, DomainError
 
 
 class Registration(StatesGroup):
@@ -24,6 +24,11 @@ class Registration(StatesGroup):
 class FeedbackFlow(StatesGroup):
     rating = State()
     comment = State()
+
+
+class ProfileEdit(StatesGroup):
+    phone = State()
+    birth_date = State()
 
 
 class ClientBot:
@@ -56,6 +61,14 @@ class ClientBot:
             [KeyboardButton(text="Мои награды"), KeyboardButton(text="История")],
             [KeyboardButton(text="Профиль"), KeyboardButton(text="Оставить отзыв")],
             [KeyboardButton(text="Уведомления")],
+        ], resize_keyboard=True)
+
+    @staticmethod
+    def profile_keyboard() -> ReplyKeyboardMarkup:
+        return ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text="Изменить телефон")],
+            [KeyboardButton(text="Изменить дату рождения")],
+            [KeyboardButton(text="Назад")],
         ], resize_keyboard=True)
 
     def _routes(self) -> None:
@@ -135,7 +148,45 @@ class ClientBot:
                 customer_session_id=await self._session_id(session,message)
                 if not customer_session_id: await message.answer("Сначала пройдите регистрацию: /start"); return
                 home=await self.portal.home(session,customer_session_id=customer_session_id)
-            c=home.customer; await message.answer(f"{c.first_name}\nТелефон: {c.phone}\nДата рождения: {c.birth_date.strftime('%d.%m.%Y')}\nУровень: {home.tier_name}")
+            c=home.customer
+            await message.answer(f"{c.first_name}\nТелефон: {c.phone}\nДата рождения: {c.birth_date.strftime('%d.%m.%Y')}\nУровень: {home.tier_name}", reply_markup=self.profile_keyboard())
+
+        @self.router.message(F.text == "Изменить телефон")
+        async def profile_phone_start(message: Message, state: FSMContext) -> None:
+            await state.set_state(ProfileEdit.phone)
+            kb=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Поделиться новым номером",request_contact=True)],[KeyboardButton(text="Назад")]],resize_keyboard=True,one_time_keyboard=True)
+            await message.answer("Отправьте новый номер кнопкой ниже.", reply_markup=kb)
+
+        @self.router.message(ProfileEdit.phone, F.contact)
+        async def profile_phone(message: Message, state: FSMContext) -> None:
+            if message.contact.user_id != message.from_user.id:
+                await message.answer("Нужно отправить свой номер через кнопку."); return
+            try:
+                async with self.sessions.begin() as session:
+                    customer_session_id=await self._session_id(session,message)
+                    if not customer_session_id: await message.answer("Сессия недоступна. Нажмите /start"); return
+                    await self.portal.change_phone(session,customer_session_id=customer_session_id,new_phone=message.contact.phone_number)
+            except DomainError as exc:
+                await message.answer(str(exc),reply_markup=self.profile_keyboard()); return
+            await state.clear(); await message.answer("Телефон обновлён.",reply_markup=self.profile_keyboard())
+
+        @self.router.message(F.text == "Изменить дату рождения")
+        async def profile_birth_start(message: Message, state: FSMContext) -> None:
+            await state.set_state(ProfileEdit.birth_date)
+            await message.answer("Введите новую дату рождения ДД.ММ.ГГГГ. Самостоятельно изменить её можно только один раз.",reply_markup=ReplyKeyboardRemove())
+
+        @self.router.message(ProfileEdit.birth_date)
+        async def profile_birth(message: Message, state: FSMContext) -> None:
+            try: day,month,year=map(int,(message.text or "").split(".")); birth=date(year,month,day)
+            except (ValueError,TypeError): await message.answer("Формат даты: ДД.ММ.ГГГГ."); return
+            try:
+                async with self.sessions.begin() as session:
+                    customer_session_id=await self._session_id(session,message)
+                    if not customer_session_id: await message.answer("Сессия недоступна. Нажмите /start"); return
+                    await self.portal.change_birth_date(session,customer_session_id=customer_session_id,new_birth_date=birth)
+            except DomainError as exc:
+                await state.clear(); await message.answer(str(exc),reply_markup=self.profile_keyboard()); return
+            await state.clear(); await message.answer("Дата рождения обновлена.",reply_markup=self.profile_keyboard())
 
         @self.router.message(F.text == "Оставить отзыв")
         async def feedback_start(message: Message, state: FSMContext) -> None:
@@ -170,9 +221,9 @@ class ClientBot:
                 customer_session_id=await self._session_id(session,message)
                 if not customer_session_id: await message.answer("Сначала пройдите регистрацию: /start"); return
                 prefs=await self.portal.notification_preferences(session,customer_session_id=customer_session_id)
-            status="включены" if prefs.marketing_enabled else "выключены"
+            current="включены" if prefs.marketing_enabled else "выключены"
             action="Отключить акции" if prefs.marketing_enabled else "Включить акции"
-            await message.answer(f"Уведомления об акциях: {status}.\nСервисные уведомления остаются включёнными.",reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=action)],[KeyboardButton(text="Назад")]],resize_keyboard=True,one_time_keyboard=True))
+            await message.answer(f"Уведомления об акциях: {current}.\nСервисные уведомления остаются включёнными.",reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=action)],[KeyboardButton(text="Назад")]],resize_keyboard=True,one_time_keyboard=True))
 
         @self.router.message(F.text.in_({"Включить акции","Отключить акции"}))
         async def notification_toggle(message: Message) -> None:
