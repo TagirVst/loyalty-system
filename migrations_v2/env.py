@@ -16,6 +16,7 @@ from loyalty_v2.db import customer_auth_models  # noqa: F401
 from loyalty_v2.db import customer_policy_models  # noqa: F401
 from loyalty_v2.db import engagement_models  # noqa: F401
 from loyalty_v2.db import identity_models  # noqa: F401
+from loyalty_v2.db import integration_models  # noqa: F401
 from loyalty_v2.db import milestone_models  # noqa: F401
 from loyalty_v2.db import models  # noqa: F401
 from loyalty_v2.db import notification_models  # noqa: F401
