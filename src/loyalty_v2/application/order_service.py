@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.customer_policy_service import CustomerPolicyService
@@ -13,6 +16,7 @@ from loyalty_v2.application.milestone_service import MilestoneService
 from loyalty_v2.application.notification_service import NotificationService
 from loyalty_v2.application.reward_engine import RewardCampaignEngine
 from loyalty_v2.application.services import DomainError, PointsService, TierService
+from loyalty_v2.core.config import get_settings
 from loyalty_v2.db.category_models import SaleCategory
 from loyalty_v2.db.models import Customer, CustomerLoyaltyState, LedgerEntryType, PointsAccount
 from loyalty_v2.db.order_models import IdentificationSession, Order, OrderDraft, OrderQuote
@@ -35,23 +39,48 @@ class QuoteResult:
     quote: OrderQuote
     points_balance: int
 
+@dataclass(frozen=True, slots=True)
+class IdentificationCodeResult:
+    session_id: UUID
+    code: str
+    expires_at: datetime
+
 class IdentificationService:
-    async def generate(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID) -> IdentificationSession:
+    def __init__(self) -> None:
+        self.secret = get_settings().identification_code_secret.encode("utf-8")
+
+    def _fingerprint(self, *, organization_id: UUID, code: str) -> str:
+        payload = f"{organization_id}:{code}".encode("utf-8")
+        return hmac.new(self.secret, payload, hashlib.sha256).hexdigest()
+
+    async def generate(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID) -> IdentificationCodeResult:
         now = datetime.now(timezone.utc)
-        customer = await session.scalar(select(Customer).where(Customer.id == customer_id, Customer.organization_id == organization_id))
+        customer = await session.scalar(select(Customer).where(Customer.id == customer_id, Customer.organization_id == organization_id).with_for_update())
         if customer is None or customer.is_blocked: raise InvalidIdentificationCode("Customer is unavailable")
-        active = (await session.scalars(select(IdentificationSession).where(IdentificationSession.organization_id == organization_id, IdentificationSession.customer_id == customer_id, IdentificationSession.status == "active"))).all()
+        active = (await session.scalars(select(IdentificationSession).where(IdentificationSession.organization_id == organization_id, IdentificationSession.customer_id == customer_id, IdentificationSession.status == "active").with_for_update())).all()
         for item in active: item.status = "expired"
+        await session.flush()
         for _ in range(20):
             code = f"{secrets.randbelow(100000):05d}"
-            collision = await session.scalar(select(IdentificationSession.id).where(IdentificationSession.organization_id == organization_id, IdentificationSession.code == code, IdentificationSession.status == "active"))
-            if collision is None:
-                item = IdentificationSession(organization_id=organization_id, customer_id=customer_id, code=code, status="active", expires_at=now + timedelta(seconds=IDENTIFICATION_TTL_SECONDS)); session.add(item); await session.flush(); return item
+            fingerprint = self._fingerprint(organization_id=organization_id, code=code)
+            collision = await session.scalar(select(IdentificationSession.id).where(IdentificationSession.organization_id == organization_id, IdentificationSession.code_fingerprint == fingerprint, IdentificationSession.status == "active"))
+            if collision is not None: continue
+            expires_at = now + timedelta(seconds=IDENTIFICATION_TTL_SECONDS)
+            try:
+                async with session.begin_nested():
+                    item = IdentificationSession(organization_id=organization_id, customer_id=customer_id, code=None, code_fingerprint=fingerprint, status="active", expires_at=expires_at)
+                    session.add(item)
+                    await session.flush()
+            except IntegrityError:
+                continue
+            return IdentificationCodeResult(session_id=item.id, code=code, expires_at=expires_at)
         raise DomainError("Could not allocate identification code")
 
     async def attach_to_draft(self, session: AsyncSession, *, organization_id: UUID, draft_id: UUID, code: str) -> OrderDraft:
         now = datetime.now(timezone.utc)
-        ident = await session.scalar(select(IdentificationSession).where(IdentificationSession.organization_id == organization_id, IdentificationSession.code == code, IdentificationSession.status == "active").with_for_update())
+        if len(code) != 5 or not code.isdigit(): raise InvalidIdentificationCode("Identification code is invalid")
+        fingerprint = self._fingerprint(organization_id=organization_id, code=code)
+        ident = await session.scalar(select(IdentificationSession).where(IdentificationSession.organization_id == organization_id, IdentificationSession.code_fingerprint == fingerprint, IdentificationSession.status == "active").with_for_update())
         if ident is None: raise InvalidIdentificationCode("Identification code is invalid")
         if ident.expires_at <= now: ident.status = "expired"; raise IdentificationExpired("Identification code has expired")
         customer = await session.get(Customer, ident.customer_id)
@@ -79,7 +108,7 @@ class OrderService:
         after=max(draft.gross_amount_minor-effects.total_discount_minor,0); maximum=min((after*policy.redemption_percent)//(100*POINT_MINOR_VALUE), account.balance, after//POINT_MINOR_VALUE)
         if draft.requested_points>maximum: raise RedemptionLimitExceeded("Requested points exceed current redemption limit")
         redeemed=draft.requested_points; paid=after-redeemed*POINT_MINOR_VALUE; base=0 if redeemed else (paid*policy.effective_tier.cashback_basis_points)//1_000_000; earned=base*effects.cashback_multiplier
-        snapshot={"reward_effects":[{"customer_reward_id":str(x.customer_reward_id),"discount_minor":x.discount_minor} for x in effects.reward_effects],"campaign_effects":[{"campaign_id":str(x.campaign_id),"discount_minor":x.discount_minor,"cashback_multiplier":x.cashback_multiplier} for x in effects.campaign_effects],"total_discount_minor":effects.total_discount_minor,"cashback_multiplier":effects.cashback_multiplier,"effective_tier_id":str(policy.effective_tier.id),"automatic_tier_id":str(policy.automatic_tier.id),"tier_override_id":str(policy.tier_override_id) if policy.tier_override_id else None,"redemption_percent":policy.redemption_percent,"redemption_override_id":str(policy.redemption_override_id) if policy.redemption_override_id else None,"inactivity_steps":policy.inactivity_steps}
+        snapshot={"reward_effects":[{"customer_reward_id":str(x.customer_reward_id),"discount_minor":x.discount_minor} for x in effects.reward_effects],"campaign_effects":[{"campaign_id":str(x.campaign_id),"campaign_version":x.campaign_version,"discount_minor":x.discount_minor,"cashback_multiplier":x.cashback_multiplier} for x in effects.campaign_effects],"total_discount_minor":effects.total_discount_minor,"cashback_multiplier":effects.cashback_multiplier,"effective_tier_id":str(policy.effective_tier.id),"automatic_tier_id":str(policy.automatic_tier.id),"tier_override_id":str(policy.tier_override_id) if policy.tier_override_id else None,"redemption_percent":policy.redemption_percent,"redemption_override_id":str(policy.redemption_override_id) if policy.redemption_override_id else None,"inactivity_steps":policy.inactivity_steps}
         return policy,effects,after,maximum,redeemed,paid,earned,snapshot,selected_ids
 
     async def quote(self, session, *, organization_id, draft_id):
@@ -94,9 +123,10 @@ class OrderService:
         existing=await session.scalar(select(Order).where(Order.organization_id==organization_id,Order.idempotency_key==idempotency_key))
         if existing: return existing
         draft=await session.scalar(select(OrderDraft).where(OrderDraft.id==draft_id,OrderDraft.organization_id==organization_id).with_for_update())
+        if draft is None: raise DraftNotReady("Draft cannot be confirmed")
         existing=await session.scalar(select(Order).where(Order.organization_id==organization_id,Order.idempotency_key==idempotency_key))
         if existing: return existing
-        if draft is None or draft.status!="draft" or draft.customer_id is None: raise DraftNotReady("Draft cannot be confirmed")
+        if draft.status!="draft" or draft.customer_id is None: raise DraftNotReady("Draft cannot be confirmed")
         quote=await session.scalar(select(OrderQuote).where(OrderQuote.id==quote_id,OrderQuote.draft_id==draft.id)); now=datetime.now(timezone.utc)
         if quote is None or quote.expires_at<=now: raise QuoteExpired("Quote has expired")
         if quote.draft_version!=draft.version or quote.category_counts_snapshot!=draft.category_counts: raise QuoteStale("Draft changed after quote")
