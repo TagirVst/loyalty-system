@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -8,9 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.client_service import ClientService
+from loyalty_v2.application.customer_policy_service import CustomerPolicyService
 from loyalty_v2.application.feedback_service import FeedbackService
 from loyalty_v2.application.notification_service import NotificationService
 from loyalty_v2.application.principal import CustomerSessionInvalid, PrincipalService
+from loyalty_v2.application.services import DomainError
 from loyalty_v2.db.models import Customer
 from loyalty_v2.db.order_models import Order
 from loyalty_v2.db.reward_models import CustomerReward, RewardDefinition
@@ -21,6 +24,7 @@ principals = PrincipalService()
 clients = ClientService()
 feedback = FeedbackService()
 notifications = NotificationService()
+policies = CustomerPolicyService()
 
 
 class FeedbackRequest(BaseModel):
@@ -35,6 +39,16 @@ class NotificationPreferencesRequest(BaseModel):
     marketing_enabled: bool
 
 
+class ChangePhoneRequest(BaseModel):
+    customer_session_id: UUID
+    new_phone: str = Field(min_length=7, max_length=32)
+
+
+class ChangeBirthDateRequest(BaseModel):
+    customer_session_id: UUID
+    new_birth_date: date
+
+
 async def _principal(session: AsyncSession, session_id: UUID):
     try:
         return await principals.customer(session, customer_session_id=session_id)
@@ -42,12 +56,38 @@ async def _principal(session: AsyncSession, session_id: UUID):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
+def _domain_error(exc: DomainError) -> HTTPException:
+    return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"code": exc.code, "message": str(exc)})
+
+
 @router.get("/me")
 async def me(customer_session_id: UUID, session: AsyncSession = Depends(get_session)) -> dict:
     p = await _principal(session, customer_session_id)
     customer = await session.scalar(select(Customer).where(Customer.id == p.customer_id, Customer.organization_id == p.organization_id))
     state = await clients.home(session, organization_id=p.organization_id, customer_id=p.customer_id)
-    return {"id": customer.id, "first_name": customer.first_name, "phone": customer.phone, "birth_date": customer.birth_date, "balance": state.balance, "tier": state.tier_name, "cashback_basis_points": state.cashback_basis_points}
+    return {"id": customer.id, "first_name": customer.first_name, "phone": customer.phone, "birth_date": customer.birth_date, "birth_date_change_count": customer.birth_date_change_count, "balance": state.balance, "tier": state.tier_name, "cashback_basis_points": state.cashback_basis_points}
+
+
+@router.put("/phone")
+async def change_phone(body: ChangePhoneRequest, session: AsyncSession = Depends(get_session)) -> dict:
+    try:
+        async with session.begin():
+            p = await _principal(session, body.customer_session_id)
+            customer = await policies.change_phone(session, organization_id=p.organization_id, customer_id=p.customer_id, new_phone=body.new_phone.strip())
+        return {"phone": customer.phone}
+    except DomainError as exc:
+        raise _domain_error(exc) from exc
+
+
+@router.put("/birth-date")
+async def change_birth_date(body: ChangeBirthDateRequest, session: AsyncSession = Depends(get_session)) -> dict:
+    try:
+        async with session.begin():
+            p = await _principal(session, body.customer_session_id)
+            customer = await policies.change_birth_date(session, organization_id=p.organization_id, customer_id=p.customer_id, new_birth_date=body.new_birth_date)
+        return {"birth_date": customer.birth_date, "change_count": customer.birth_date_change_count}
+    except DomainError as exc:
+        raise _domain_error(exc) from exc
 
 
 @router.get("/orders")
