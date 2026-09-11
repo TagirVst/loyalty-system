@@ -12,6 +12,7 @@ from loyalty_v2.application.services import DomainError, PointsService, TierServ
 from loyalty_v2.db.models import CustomerLoyaltyState, LedgerEntryType
 from loyalty_v2.db.order_models import Order
 from loyalty_v2.db.refund_models import Refund
+from loyalty_v2.db.reward_models import CustomerReward
 
 CASHIER_CANCEL_WINDOW = timedelta(minutes=10)
 
@@ -72,6 +73,23 @@ class RefundService:
             if count: result[code]=count
         return result
 
+    async def _restore_order_rewards(self, session: AsyncSession, order: Order, *, now: datetime) -> list[str]:
+        ids: list[UUID] = []
+        for effect in (order.loyalty_effects_snapshot or {}).get("reward_effects", []):
+            try: ids.append(UUID(str(effect["customer_reward_id"])))
+            except (KeyError, TypeError, ValueError): continue
+        if not ids: return []
+        rewards = (await session.scalars(select(CustomerReward).where(CustomerReward.organization_id==order.organization_id,CustomerReward.customer_id==order.customer_id,CustomerReward.id.in_(ids)).order_by(CustomerReward.id.asc()).with_for_update())).all()
+        restored: list[str] = []
+        for reward in rewards:
+            if reward.status in {"revoked","expired"}: continue
+            if reward.valid_until is not None and reward.valid_until<=now: continue
+            reward.quantity_remaining += 1
+            reward.status = "active" if reward.valid_from<=now else "issued"
+            reward.consumed_at = None
+            restored.append(str(reward.id))
+        return restored
+
     async def preview(self, session: AsyncSession, *, organization_id: UUID, order_id: UUID, gross_refund_minor: int | None = None, category_counts: dict[str,int] | None = None) -> RefundPreview:
         order=await session.scalar(select(Order).where(Order.id==order_id,Order.organization_id==organization_id))
         if order is None: raise RefundNotAllowed("Order not found")
@@ -108,5 +126,8 @@ class RefundService:
                 refund.points_debt_created=shortfall
                 refund.calculation_snapshot={**refund.calculation_snapshot,"points_debt_created":shortfall}
         if preview.category_counts: await self.milestones.apply_refund(session,organization_id=organization_id,customer_id=order.customer_id,order_id=order.id,category_counts=preview.category_counts)
+        if preview.remaining_gross_minor==0:
+            restored_reward_ids=await self._restore_order_rewards(session,order,now=now)
+            if restored_reward_ids: refund.calculation_snapshot={**refund.calculation_snapshot,"restored_reward_ids":restored_reward_ids}
         state.qualification_spend_minor=max(0,state.qualification_spend_minor-preview.qualification_reversal_minor); tier_after=await self.tiers.tier_for_spend(session,organization_id,state.qualification_spend_minor); state.automatic_tier_id=tier_after.id
         order.status="refunded" if preview.remaining_gross_minor==0 else "partially_refunded"; await session.flush(); return refund
