@@ -8,7 +8,6 @@ class StaffLogoutRequest(StaffScopedRequest): pass
 class AdjustPointsRequest(StaffScopedRequest): delta:int; reason:str=Field(min_length=1,max_length=500); idempotency_key:str=Field(min_length=1,max_length=128)
 class PointsEntryResponse(BaseModel): entry_id:UUID; customer_id:UUID; delta:int; balance_after:int; entry_type:str
 
-
 def _validate_counts(value:dict[str,int])->dict[str,int]:
     if any(not key.strip() or count<=0 for key,count in value.items()): raise ValueError("category counts must use non-empty codes and positive quantities")
     return value
@@ -36,5 +35,5 @@ class RefundPreviewRequest(StaffScopedRequest):
     def validate_refund_categories(cls,value:dict[str,int]|None)->dict[str,int]|None: return None if value is None else _validate_counts(value)
 class RefundPreviewResponse(BaseModel): gross_refund_minor:int; paid_refund_minor:int; restored_points:int; reversed_earned_points:int; qualification_reversal_minor:int; remaining_gross_minor:int; category_counts:dict[str,int]=Field(default_factory=dict)
 class ConfirmRefundRequest(RefundPreviewRequest): reason:str=Field(min_length=1,max_length=500); idempotency_key:str=Field(min_length=1,max_length=128)
-class RefundResponse(BaseModel): refund_id:UUID; order_id:UUID; refund_type:str; gross_refund_minor:int; paid_refund_minor:int; restored_points:int; reversed_earned_points:int
+class RefundResponse(BaseModel): refund_id:UUID; order_id:UUID; refund_type:str; gross_refund_minor:int; paid_refund_minor:int; restored_points:int; reversed_earned_points:int; points_debt_created:int=0
 class CancelOwnOrderRequest(StaffScopedRequest): reason:str=Field(min_length=1,max_length=500); idempotency_key:str=Field(min_length=1,max_length=128)
