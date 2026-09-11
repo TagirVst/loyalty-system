@@ -4,7 +4,7 @@ import asyncio
 
 from aiogram import Bot
 
-from loyalty_v2.application.notification_service import NotificationService
+from loyalty_v2.application.notification_service import DeliveryBatchResult, NotificationService
 from loyalty_v2.application.telegram_notification_provider import TelegramNotificationProvider
 from loyalty_v2.core.config import get_settings
 from loyalty_v2.db.session import SessionFactory
@@ -21,9 +21,22 @@ async def run_forever(*, poll_seconds: float = 2.0) -> None:
         while True:
             async with SessionFactory() as session:
                 async with session.begin():
-                    result = await service.deliver_due(session, provider=provider, limit=100)
-            if result.sent == 0 and result.retried == 0 and result.failed == 0:
+                    claimed = await service.claim_due(session, limit=100)
+            if not claimed:
                 await asyncio.sleep(poll_seconds)
+                continue
+            for item in claimed:
+                error: Exception | None = None
+                if item.recipient is None:
+                    error = RuntimeError("No active verified delivery identity")
+                else:
+                    try:
+                        await provider.send(recipient=item.recipient, body=item.body)
+                    except Exception as exc:
+                        error = exc
+                async with SessionFactory() as session:
+                    async with session.begin():
+                        await service.complete_delivery(session, notification_id=item.id, error=error)
     finally:
         await bot.session.close()
 
