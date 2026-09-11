@@ -12,6 +12,14 @@ fi
 : "${POSTGRES_DB:=loyalty_v2}"
 : "${ALLOW_DESTRUCTIVE_RESTORE:=false}"
 
+case "$POSTGRES_DB" in
+  *[!A-Za-z0-9_]*) echo "invalid POSTGRES_DB" >&2; exit 2 ;;
+esac
+
+if [ -z "${PGPASSWORD:-}" ] && [ -n "${POSTGRES_PASSWORD:-}" ]; then
+  export PGPASSWORD="$POSTGRES_PASSWORD"
+fi
+
 if [ "$ALLOW_DESTRUCTIVE_RESTORE" != "true" ]; then
   echo "refusing destructive restore; set ALLOW_DESTRUCTIVE_RESTORE=true" >&2
   exit 3
