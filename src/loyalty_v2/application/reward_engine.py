@@ -35,6 +35,7 @@ class RewardCampaignEngine:
     async def resolve(self, session: AsyncSession, *, organization_id: UUID, customer_id: UUID, gross_amount_minor: int, selected_reward_ids: list[UUID] | None = None, category_counts: dict[str,int] | None = None, now: datetime | None = None) -> LoyaltyEffects:
         now = now or datetime.now(timezone.utc)
         categories = {str(k): max(int(v),0) for k,v in (category_counts or {}).items() if int(v) > 0}
+        reward_categories = dict(categories)
         reward_effects:list[RewardEffect]=[]; campaign_effects:list[CampaignEffect]=[]; total_discount=0; cashback_multiplier=1
         if selected_reward_ids:
             rows=(await session.execute(select(CustomerReward,RewardDefinition).join(RewardDefinition,RewardDefinition.id==CustomerReward.reward_definition_id).where(CustomerReward.organization_id==organization_id,CustomerReward.customer_id==customer_id,CustomerReward.id.in_(selected_reward_ids),CustomerReward.status=="active",CustomerReward.quantity_remaining>0,RewardDefinition.is_active.is_(True)).order_by(CustomerReward.id.asc()).with_for_update(of=CustomerReward))).all()
@@ -44,7 +45,7 @@ class RewardCampaignEngine:
             for cr,d in rows:
                 if cr.valid_from>now: raise ValueError("Reward is not active yet")
                 if cr.valid_until and cr.valid_until<=now: raise ValueError("Reward has expired")
-                discount=self._reward_discount(d,gross_amount_minor,categories)
+                discount=self._reward_discount(d,gross_amount_minor,reward_categories)
                 reward_effects.append(RewardEffect(cr.id,discount)); total_discount+=discount
         campaigns=(await session.scalars(select(Campaign).where(Campaign.organization_id==organization_id,Campaign.is_active.is_(True),(Campaign.starts_at.is_(None)|(Campaign.starts_at<=now)),(Campaign.ends_at.is_(None)|(Campaign.ends_at>=now))).order_by(Campaign.priority.asc(),Campaign.id.asc()))).all()
         needs_segments=any((c.conditions or {}).get("segment_codes") for c in campaigns)
@@ -74,7 +75,8 @@ class RewardCampaignEngine:
         if t=="free_item_value": return min(max(int(config.get("value_minor",0) or 0),0),gross_amount_minor)
         if t=="free_category_item":
             code=str(config.get("category_code") or ""); count=categories.get(code,0)
-            if count<=0: raise ValueError("Required reward category is not present in order")
+            if count<=0: raise ValueError("Required reward category quantity is not available in order")
+            categories[code] = count - 1
             return min(max(int(config.get("value_minor",0) or 0),0),gross_amount_minor)
         if t=="category_discount":
             code=str(config.get("category_code") or ""); per_item=max(int(config.get("amount_per_item_minor",0) or 0),0)
