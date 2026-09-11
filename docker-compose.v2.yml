@@ -2,14 +2,11 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-loyalty}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${POSTGRES_DB:-loyalty_v2}
+    env_file: .env.v2
     volumes:
       - loyalty_v2_postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-loyalty} -d ${POSTGRES_DB:-loyalty_v2}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-loyalty} -d $${POSTGRES_DB:-loyalty_v2}"]
       interval: 10s
       timeout: 5s
       retries: 10
