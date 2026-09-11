@@ -94,6 +94,8 @@ class OrderService:
         existing=await session.scalar(select(Order).where(Order.organization_id==organization_id,Order.idempotency_key==idempotency_key))
         if existing: return existing
         draft=await session.scalar(select(OrderDraft).where(OrderDraft.id==draft_id,OrderDraft.organization_id==organization_id).with_for_update())
+        existing=await session.scalar(select(Order).where(Order.organization_id==organization_id,Order.idempotency_key==idempotency_key))
+        if existing: return existing
         if draft is None or draft.status!="draft" or draft.customer_id is None: raise DraftNotReady("Draft cannot be confirmed")
         quote=await session.scalar(select(OrderQuote).where(OrderQuote.id==quote_id,OrderQuote.draft_id==draft.id)); now=datetime.now(timezone.utc)
         if quote is None or quote.expires_at<=now: raise QuoteExpired("Quote has expired")
