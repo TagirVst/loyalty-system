@@ -39,11 +39,6 @@ class NotificationPreferencesRequest(BaseModel):
     marketing_enabled: bool
 
 
-class ChangePhoneRequest(BaseModel):
-    customer_session_id: UUID
-    new_phone: str = Field(min_length=7, max_length=32)
-
-
 class ChangeBirthDateRequest(BaseModel):
     customer_session_id: UUID
     new_birth_date: date
@@ -68,17 +63,6 @@ async def me(customer_session_id: UUID, session: AsyncSession = Depends(get_sess
     return {"id": customer.id, "first_name": customer.first_name, "phone": customer.phone, "birth_date": customer.birth_date, "birth_date_change_count": customer.birth_date_change_count, "balance": state.balance, "tier": state.tier_name, "cashback_basis_points": state.cashback_basis_points}
 
 
-@router.put("/phone")
-async def change_phone(body: ChangePhoneRequest, session: AsyncSession = Depends(get_session)) -> dict:
-    try:
-        async with session.begin():
-            p = await _principal(session, body.customer_session_id)
-            customer = await policies.change_phone(session, organization_id=p.organization_id, customer_id=p.customer_id, new_phone=body.new_phone.strip())
-        return {"phone": customer.phone}
-    except DomainError as exc:
-        raise _domain_error(exc) from exc
-
-
 @router.put("/birth-date")
 async def change_birth_date(body: ChangeBirthDateRequest, session: AsyncSession = Depends(get_session)) -> dict:
     try:
@@ -101,7 +85,7 @@ async def orders(customer_session_id: UUID, limit: int = Query(default=50, ge=1,
 async def rewards(customer_session_id: UUID, session: AsyncSession = Depends(get_session)) -> list[dict]:
     p = await _principal(session, customer_session_id)
     rows = (await session.execute(select(CustomerReward, RewardDefinition).join(RewardDefinition, RewardDefinition.id == CustomerReward.reward_definition_id).where(CustomerReward.organization_id == p.organization_id, CustomerReward.customer_id == p.customer_id).order_by(CustomerReward.issued_at.desc()))).all()
-    return [{"id": r.id, "name": d.name, "reward_type": d.reward_type, "status": r.status, "quantity_remaining": r.quantity_remaining, "valid_from": r.valid_from, "valid_until": r.valid_until} for r,d in rows]
+    return [{"id": r.id, "name": (r.definition_snapshot or {}).get("name") or d.name, "reward_type": (r.definition_snapshot or {}).get("reward_type") or d.reward_type, "status": r.status, "quantity_remaining": r.quantity_remaining, "valid_from": r.valid_from, "valid_until": r.valid_until} for r,d in rows]
 
 
 @router.get("/notification-preferences")
