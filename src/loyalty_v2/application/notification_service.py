@@ -6,7 +6,7 @@ from string import Formatter
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.segment_service import SegmentService
@@ -27,6 +27,13 @@ class DeliveryBatchResult:
     retried: int = 0
     failed: int = 0
     skipped: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedNotification:
+    id: UUID
+    recipient: str | None
+    body: str
 
 
 class NotificationService:
@@ -74,17 +81,35 @@ class NotificationService:
             if item is not None: queued += 1
         return queued
 
-    async def deliver_due(self, session: AsyncSession, *, provider: NotificationProvider, now: datetime | None = None, limit: int = 100) -> DeliveryBatchResult:
-        now = now or datetime.now(timezone.utc); rows = (await session.scalars(select(NotificationOutbox).where(NotificationOutbox.status.in_(["queued", "retry"]), NotificationOutbox.next_attempt_at <= now).order_by(NotificationOutbox.created_at.asc()).limit(limit).with_for_update(skip_locked=True))).all(); sent = retried = failed = skipped = 0
+    async def claim_due(self, session: AsyncSession, *, now: datetime | None = None, limit: int = 100, lease_seconds: int = 120) -> list[ClaimedNotification]:
+        now = now or datetime.now(timezone.utc)
+        rows = (await session.scalars(select(NotificationOutbox).where(
+            or_(
+                (NotificationOutbox.status.in_(["queued", "retry"])) & (NotificationOutbox.next_attempt_at <= now),
+                (NotificationOutbox.status == "processing") & (NotificationOutbox.lease_until <= now),
+            )
+        ).order_by(NotificationOutbox.created_at.asc()).limit(limit).with_for_update(skip_locked=True))).all()
+        claimed: list[ClaimedNotification] = []
         for item in rows:
-            if item.recipient_type == "staff_chat": recipient = item.recipient_address
+            if item.recipient_type == "staff_chat":
+                recipient = item.recipient_address
             else:
-                identity = await session.scalar(select(CustomerAuthIdentity).where(CustomerAuthIdentity.organization_id == item.organization_id, CustomerAuthIdentity.customer_id == item.customer_id, CustomerAuthIdentity.provider == item.channel, CustomerAuthIdentity.is_active.is_(True), CustomerAuthIdentity.is_verified.is_(True))); recipient = identity.external_subject if identity is not None else None
-            if not recipient: item.status="failed"; item.failed_at=now; item.last_error="No active verified delivery identity"; failed += 1; continue
-            try: await provider.send(recipient=recipient, body=item.body)
-            except Exception as exc:
-                item.attempts += 1; item.last_error = str(exc)[:1000]
-                if item.attempts >= item.max_attempts: item.status="failed"; item.failed_at=now; failed += 1
-                else: item.status="retry"; item.next_attempt_at = now + timedelta(seconds=min(3600, 30 * (2 ** max(0, item.attempts - 1)))); retried += 1
-            else: item.attempts += 1; item.status="sent"; item.sent_at=now; item.last_error=None; sent += 1
-        return DeliveryBatchResult(sent, retried, failed, skipped)
+                identity = await session.scalar(select(CustomerAuthIdentity).where(CustomerAuthIdentity.organization_id == item.organization_id, CustomerAuthIdentity.customer_id == item.customer_id, CustomerAuthIdentity.provider == item.channel, CustomerAuthIdentity.is_active.is_(True), CustomerAuthIdentity.is_verified.is_(True)))
+                recipient = identity.external_subject if identity is not None else None
+            item.status = "processing"
+            item.lease_until = now + timedelta(seconds=lease_seconds)
+            claimed.append(ClaimedNotification(item.id, recipient, item.body))
+        await session.flush()
+        return claimed
+
+    async def complete_delivery(self, session: AsyncSession, *, notification_id: UUID, error: Exception | None = None, now: datetime | None = None) -> DeliveryBatchResult:
+        now = now or datetime.now(timezone.utc)
+        item = await session.scalar(select(NotificationOutbox).where(NotificationOutbox.id == notification_id).with_for_update())
+        if item is None or item.status != "processing": return DeliveryBatchResult(skipped=1)
+        item.attempts += 1; item.lease_until = None
+        if error is None:
+            item.status = "sent"; item.sent_at = now; item.last_error = None; return DeliveryBatchResult(sent=1)
+        item.last_error = str(error)[:1000]
+        if item.attempts >= item.max_attempts:
+            item.status = "failed"; item.failed_at = now; return DeliveryBatchResult(failed=1)
+        item.status = "retry"; item.next_attempt_at = now + timedelta(seconds=min(3600, 30 * (2 ** max(0, item.attempts - 1)))); return DeliveryBatchResult(retried=1)
