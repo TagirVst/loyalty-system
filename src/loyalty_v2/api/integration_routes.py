@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.auth_service import Permission
+from loyalty_v2.application.integration_order_service import IntegrationOrderService
 from loyalty_v2.application.integration_service import IntegrationAuthError, IntegrationService
 from loyalty_v2.application.principal import PrincipalService
 from loyalty_v2.application.services import DomainError
@@ -15,6 +16,7 @@ from loyalty_v2.db.session import get_session
 router = APIRouter(prefix="/api/v2", tags=["integrations"])
 principals = PrincipalService()
 integrations = IntegrationService()
+integration_orders = IntegrationOrderService()
 
 
 class CreateIntegrationClientRequest(BaseModel):
@@ -42,34 +44,21 @@ async def create_client(body: CreateIntegrationClientRequest, session: AsyncSess
             principal = await principals.staff(session, staff_session_id=body.staff_session_id)
             principal.require(Permission.ADMIN_ACCESS)
             created = await integrations.create_client(session, organization_id=principal.organization_id, name=body.name, provider=body.provider)
-        return {
-            "id": created.client.id,
-            "name": created.client.name,
-            "provider": created.client.provider,
-            "api_key": created.api_key,
-            "warning": "API key is returned only at creation time",
-        }
+        return {"id": created.client.id, "name": created.client.name, "provider": created.client.provider, "api_key": created.api_key, "warning": "API key is returned only at creation time"}
     except DomainError as exc:
         raise _error(exc) from exc
 
 
 @router.post("/integrations/webhooks/{provider}")
-async def webhook(
-    provider: str,
-    body: WebhookRequest,
-    x_integration_key: str = Header(alias="X-Integration-Key"),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
+async def webhook(provider: str, body: WebhookRequest, x_integration_key: str = Header(alias="X-Integration-Key"), session: AsyncSession = Depends(get_session)) -> dict:
     try:
         async with session.begin():
             client = await integrations.authenticate(session, provider=provider, api_key=x_integration_key)
-            item, created = await integrations.ingest_webhook(
-                session,
-                client=client,
-                external_event_id=body.external_event_id,
-                event_type=body.event_type,
-                payload=body.payload,
-            )
-        return {"event_id": item.id, "status": item.status, "accepted": created}
+            item, created = await integrations.ingest_webhook(session, client=client, external_event_id=body.external_event_id, event_type=body.event_type, payload=body.payload)
+            order_id = None
+            if client.provider == "generic" and item.event_type == "order.confirm":
+                mapping = await integration_orders.process(session, client=client, inbox=item)
+                order_id = mapping.order_id if mapping else None
+        return {"event_id": item.id, "status": item.status, "accepted": created, "order_id": order_id}
     except DomainError as exc:
         raise _error(exc) from exc
