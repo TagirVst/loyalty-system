@@ -14,7 +14,7 @@ from loyalty_v2.api.system_routes import router as system_router
 from loyalty_v2.core.config import get_settings
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="0.1.0-pre.1")
+app = FastAPI(title=settings.app_name, version="0.1.0rc1")
 app.include_router(system_router)
 app.include_router(secure_router)
 app.include_router(admin_config_router)
