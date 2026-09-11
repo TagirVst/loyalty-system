@@ -35,8 +35,9 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
+          cache-dependency-path: requirements-v2.txt
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-v2.txt
       - name: Compile V2 package
         run: python -m compileall -q src/loyalty_v2 tests_v2
       - name: Apply migrations
