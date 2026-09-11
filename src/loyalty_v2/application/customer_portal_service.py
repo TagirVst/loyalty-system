@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.client_service import ClientService
+from loyalty_v2.application.customer_policy_service import CustomerPolicyService
 from loyalty_v2.application.feedback_service import FeedbackService
 from loyalty_v2.application.notification_service import NotificationService
 from loyalty_v2.application.order_service import IdentificationService
@@ -22,6 +24,7 @@ class CustomerPortalService:
         self.identification = IdentificationService()
         self.feedback_service = FeedbackService()
         self.notifications = NotificationService()
+        self.policies = CustomerPolicyService()
 
     async def home(self, session: AsyncSession, *, customer_session_id: UUID):
         p = await self.principals.customer(session, customer_session_id=customer_session_id)
@@ -36,36 +39,18 @@ class CustomerPortalService:
         rows = await session.execute(
             select(CustomerReward, RewardDefinition)
             .join(RewardDefinition, RewardDefinition.id == CustomerReward.reward_definition_id)
-            .where(
-                CustomerReward.organization_id == p.organization_id,
-                CustomerReward.customer_id == p.customer_id,
-                CustomerReward.status.in_(["issued", "active"]),
-                CustomerReward.quantity_remaining > 0,
-            )
+            .where(CustomerReward.organization_id == p.organization_id, CustomerReward.customer_id == p.customer_id, CustomerReward.status.in_(["issued", "active"]), CustomerReward.quantity_remaining > 0)
             .order_by(CustomerReward.issued_at.desc())
         )
         return rows.all()
 
     async def history(self, session: AsyncSession, *, customer_session_id: UUID, limit: int = 20) -> list[PointsLedgerEntry]:
         p = await self.principals.customer(session, customer_session_id=customer_session_id)
-        return list((await session.scalars(
-            select(PointsLedgerEntry)
-            .where(
-                PointsLedgerEntry.organization_id == p.organization_id,
-                PointsLedgerEntry.customer_id == p.customer_id,
-            )
-            .order_by(PointsLedgerEntry.created_at.desc(), PointsLedgerEntry.id.desc())
-            .limit(limit)
-        )).all())
+        return list((await session.scalars(select(PointsLedgerEntry).where(PointsLedgerEntry.organization_id == p.organization_id, PointsLedgerEntry.customer_id == p.customer_id).order_by(PointsLedgerEntry.created_at.desc(), PointsLedgerEntry.id.desc()).limit(limit))).all())
 
     async def orders(self, session: AsyncSession, *, customer_session_id: UUID, limit: int = 20) -> list[Order]:
         p = await self.principals.customer(session, customer_session_id=customer_session_id)
-        return list((await session.scalars(
-            select(Order)
-            .where(Order.organization_id == p.organization_id, Order.customer_id == p.customer_id)
-            .order_by(Order.confirmed_at.desc(), Order.id.desc())
-            .limit(limit)
-        )).all())
+        return list((await session.scalars(select(Order).where(Order.organization_id == p.organization_id, Order.customer_id == p.customer_id).order_by(Order.confirmed_at.desc(), Order.id.desc()).limit(limit))).all())
 
     async def submit_feedback(self, session: AsyncSession, *, customer_session_id: UUID, rating: int, comment: str | None = None, order_id: UUID | None = None):
         p = await self.principals.customer(session, customer_session_id=customer_session_id)
@@ -78,3 +63,11 @@ class CustomerPortalService:
     async def set_marketing_notifications(self, session: AsyncSession, *, customer_session_id: UUID, enabled: bool):
         p = await self.principals.customer(session, customer_session_id=customer_session_id)
         return await self.notifications.set_preferences(session, organization_id=p.organization_id, customer_id=p.customer_id, marketing_enabled=enabled)
+
+    async def change_phone(self, session: AsyncSession, *, customer_session_id: UUID, new_phone: str):
+        p = await self.principals.customer(session, customer_session_id=customer_session_id)
+        return await self.policies.change_phone(session, organization_id=p.organization_id, customer_id=p.customer_id, new_phone=new_phone)
+
+    async def change_birth_date(self, session: AsyncSession, *, customer_session_id: UUID, new_birth_date: date):
+        p = await self.principals.customer(session, customer_session_id=customer_session_id)
+        return await self.policies.change_birth_date(session, organization_id=p.organization_id, customer_id=p.customer_id, new_birth_date=new_birth_date)
