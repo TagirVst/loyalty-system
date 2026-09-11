@@ -1,9 +1,10 @@
-from loyalty_v2.application.order_service import DEFAULT_REDEMPTION_PERCENT, POINT_MINOR_VALUE
+from loyalty_v2.application.order_service import POINT_MINOR_VALUE
 
 
 def test_standard_redemption_limit_for_1000_rub() -> None:
     amount_minor = 100_000
-    max_points = (amount_minor * DEFAULT_REDEMPTION_PERCENT) // (100 * POINT_MINOR_VALUE)
+    redemption_percent = 30
+    max_points = (amount_minor * redemption_percent) // (100 * POINT_MINOR_VALUE)
     assert max_points == 300
 
 
