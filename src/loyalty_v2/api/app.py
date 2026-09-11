@@ -7,6 +7,7 @@ from loyalty_v2.api.admin_notification_routes import router as admin_notificatio
 from loyalty_v2.api.admin_staff_routes import router as admin_staff_router
 from loyalty_v2.api.customer_routes import router as customer_router
 from loyalty_v2.api.engagement_routes import router as engagement_router
+from loyalty_v2.api.integration_routes import router as integration_router
 from loyalty_v2.api.secure_policy_routes import router as secure_policy_router
 from loyalty_v2.api.secure_routes import router as secure_router
 from loyalty_v2.core.config import get_settings
@@ -20,6 +21,7 @@ app.include_router(admin_staff_router)
 app.include_router(admin_customer_router)
 app.include_router(admin_notification_router)
 app.include_router(admin_analytics_router)
+app.include_router(integration_router)
 app.include_router(engagement_router)
 app.include_router(customer_router)
 
