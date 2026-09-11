@@ -9,9 +9,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt pyproject.toml ./
+COPY requirements-v2.txt pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements-v2.txt
 
 COPY src ./src
 COPY migrations_v2 ./migrations_v2
