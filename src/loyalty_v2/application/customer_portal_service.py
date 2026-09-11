@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loyalty_v2.application.client_service import ClientService
 from loyalty_v2.application.feedback_service import FeedbackService
+from loyalty_v2.application.notification_service import NotificationService
 from loyalty_v2.application.order_service import IdentificationService
 from loyalty_v2.application.principal import PrincipalService
 from loyalty_v2.db.models import PointsLedgerEntry
@@ -20,6 +21,7 @@ class CustomerPortalService:
         self.client = ClientService()
         self.identification = IdentificationService()
         self.feedback_service = FeedbackService()
+        self.notifications = NotificationService()
 
     async def home(self, session: AsyncSession, *, customer_session_id: UUID):
         p = await self.principals.customer(session, customer_session_id=customer_session_id)
@@ -67,11 +69,12 @@ class CustomerPortalService:
 
     async def submit_feedback(self, session: AsyncSession, *, customer_session_id: UUID, rating: int, comment: str | None = None, order_id: UUID | None = None):
         p = await self.principals.customer(session, customer_session_id=customer_session_id)
-        return await self.feedback_service.submit(
-            session,
-            organization_id=p.organization_id,
-            customer_id=p.customer_id,
-            rating=rating,
-            comment=comment,
-            order_id=order_id,
-        )
+        return await self.feedback_service.submit(session, organization_id=p.organization_id, customer_id=p.customer_id, rating=rating, comment=comment, order_id=order_id)
+
+    async def notification_preferences(self, session: AsyncSession, *, customer_session_id: UUID):
+        p = await self.principals.customer(session, customer_session_id=customer_session_id)
+        return await self.notifications.preferences(session, organization_id=p.organization_id, customer_id=p.customer_id)
+
+    async def set_marketing_notifications(self, session: AsyncSession, *, customer_session_id: UUID, enabled: bool):
+        p = await self.principals.customer(session, customer_session_id=customer_session_id)
+        return await self.notifications.set_preferences(session, organization_id=p.organization_id, customer_id=p.customer_id, marketing_enabled=enabled)
